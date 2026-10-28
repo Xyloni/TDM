@@ -1,4 +1,4 @@
-# GrubDrops
+# Grub Drops fork for multi-accounting
 
 [English](#english) · [Русский](#русский)
 
