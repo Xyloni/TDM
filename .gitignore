@@ -11,8 +11,8 @@
 # local data
 /data/
 /data-test/
-/account.txt
-/accounts.txt
+account*.txt
+master.key
 *.db
 *.db-wal
 *.db-shm
