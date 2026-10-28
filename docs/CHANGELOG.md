@@ -15,6 +15,7 @@ All notable changes to GrubDrops.
 - **Queue account groups from account.txt.** An optional leading group number keeps only one imported group mining at a time. Groups hand off the same campaign in order, then restart at the first group for the next campaign.
 
 ### Fixed
+- **VPS image publication with mixed-case GitHub owners.** The workflow now lowercases the owner in the GHCR image path, as required by Docker image names.
 - **Keep local account data out of Git.** Ignore the desktop test database directory, its encryption key, the Windows executable, and common account import files so they are not included by a broad Git add.
 - **Twitch inventory partial responses no longer skip active drops.** When Twitch returns inventory data with GraphQL errors, the runner now retries the read instead of treating an omitted reward as claimed and switching accounts to the next drop.
 - **Completed unlinked drops repeat after restart.** The planner now derives the finished link-blocked state from Twitch campaign data and saved watch progress, so restarting cannot put a full-time unclaimable drop back into the watch queue.

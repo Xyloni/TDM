@@ -38,6 +38,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Resolve lowercase image name
+        id: image
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/grubdrops" >> "$GITHUB_OUTPUT"
+
       - name: Build and publish latest miner image
         uses: docker/build-push-action@v7
         with:
@@ -45,6 +49,6 @@ jobs:
           file: deploy/Dockerfile.miner
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/grubdrops:latest
+          tags: ${{ steps.image.outputs.name }}:latest
           cache-from: type=gha,scope=vps-miner
           cache-to: type=gha,mode=max,scope=vps-miner
