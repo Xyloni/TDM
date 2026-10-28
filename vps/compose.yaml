@@ -1,0 +1,26 @@
+services:
+  miner:
+    image: ${GRUB_IMAGE:?Set GRUB_IMAGE in vps/.env}
+    pull_policy: always
+    restart: unless-stopped
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+    environment:
+      GRUB_MASTER_KEY: ${GRUB_MASTER_KEY:-}
+      GRUB_DB_PATH: /data/miner.db
+      GRUB_HTTP_ADDR: 0.0.0.0:8080
+      GRUB_SECURE_COOKIES: ${GRUB_SECURE_COOKIES:-1}
+      TZ: ${TZ:-UTC}
+      GRUB_BROWSER_URL: ${GRUB_BROWSER_URL:-}
+      GRUB_KICK_SIDECAR_TEMPLATE: ${GRUB_KICK_SIDECAR_TEMPLATE:-grubdrops-browser-{slug}}
+      GRUB_KICK_SIDECAR_PORT: ${GRUB_KICK_SIDECAR_PORT:-9090}
+    volumes:
+      - ./data:/data
+
+  # Poll GHCR and update only this explicitly labelled miner container.
+  watchtower:
+    image: containrrr/watchtower:latest
+    restart: unless-stopped
+    command: --interval 21600 --cleanup --label-enable
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock

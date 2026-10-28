@@ -1,0 +1,763 @@
+package kick
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/aalejandrofer/grubdrops/internal/platform"
+)
+
+// fakeDoer returns canned (status, body) per request path and records calls,
+// standing in for the live utls transport so the backend's mapping/claim/watch
+// logic is unit-testable offline.
+type fakeDoer struct {
+	resp  map[string]fakeResp
+	calls []fakeCall
+}
+
+type fakeResp struct {
+	status int
+	body   string
+}
+
+type fakeCall struct {
+	method string
+	path   string
+	body   string
+}
+
+func (f *fakeDoer) do(_ context.Context, _ platform.Session, method, path string, body []byte) ([]byte, int, error) {
+	f.calls = append(f.calls, fakeCall{method: method, path: path, body: string(body)})
+	if r, ok := f.resp[path]; ok {
+		return []byte(r.body), r.status, nil
+	}
+	return []byte("{}"), 404, nil
+}
+
+func (f *fakeDoer) getRaw(_ context.Context, rawURL string) ([]byte, string, int, error) {
+	if r, ok := f.resp[rawURL]; ok {
+		return []byte(r.body), "image/png", r.status, nil
+	}
+	return nil, "", 404, nil
+}
+
+func withFake(f *fakeDoer) *Backend {
+	b := New(nil, nil, "grubdrops-browser-{slug}", 9090, 10*time.Minute)
+	b.api = &api{d: f}
+	return b
+}
+
+func sess(id string) platform.Session { return platform.Session{AccountID: id} }
+
+func TestKickBackend_ListActiveCampaigns_MapsAndFilters(t *testing.T) {
+	f := &fakeDoer{resp: map[string]fakeResp{
+		"https://web.kick.com/api/v1/drops/campaigns": {200, `{"data":[
+			{"id":"c-rust","game":"Rust","name":"Rust Drops","status":"active",
+			 "rewards":[{"id":"ben1","name":"Crate","required_minutes":60}]},
+			{"id":"c-cs","game":"Counter-Strike","name":"CS Drops","status":"active",
+			 "rewards":[{"id":"ben2","name":"Sticker","required_minutes":30}]}
+		]}`},
+	}}
+	b := withFake(f)
+
+	all, err := b.ListActiveCampaigns(context.Background(), sess("acc1"))
+	require.NoError(t, err)
+	require.Len(t, all, 2)
+	for _, c := range all {
+		assert.Equal(t, "kick", c.Platform)
+		require.NotEmpty(t, c.Benefits)
+		assert.Equal(t, c.ID, c.Benefits[0].CampaignID)
+	}
+
+	// GameFilter turns non-whitelisted campaigns into SHELL rows (Twitch
+	// parity): still emitted with status + game + name so the /drops
+	// Discoverable tab can surface them, but with EMPTY Benefits so the
+	// watcher never mines them. Previously they were dropped outright,
+	// which made non-whitelisted Kick campaigns invisible — the user
+	// couldn't discover "WoW Forever" to whitelist it (#60).
+	s := sess("acc1")
+	s.GameFilter = func(g string) bool { return g == "Rust" }
+	only, err := b.ListActiveCampaigns(context.Background(), s)
+	require.NoError(t, err)
+	require.Len(t, only, 2)
+
+	var rust, cs *platform.Campaign
+	for i := range only {
+		switch only[i].Game {
+		case "Rust":
+			rust = &only[i]
+		case "Counter-Strike":
+			cs = &only[i]
+		}
+	}
+	require.NotNil(t, rust, "whitelisted campaign still emitted")
+	require.NotNil(t, cs, "non-whitelisted campaign emitted as shell row")
+	require.NotEmpty(t, rust.Benefits, "whitelisted campaign keeps its benefits")
+	assert.Empty(t, cs.Benefits, "shell row must carry no benefits")
+	assert.Equal(t, "active", cs.Status, "shell row keeps its status for the Discoverable tab")
+}
+
+// Kick exposes no per-campaign "is the external account linked" signal (unlike
+// Twitch). Deriving link state from /drops/progress deadlocks: progress only
+// appears after watch time, watch time is blocked until "linked", "linked" is
+// read from progress. So a connect_url campaign the account has no progress for
+// must be treated as OPTIMISTICALLY linked (mine anyway) rather than blocked.
+func TestKickBackend_ListActiveCampaigns_ConnectURLOptimisticallyLinked(t *testing.T) {
+	f := &fakeDoer{resp: map[string]fakeResp{
+		"https://web.kick.com/api/v1/drops/campaigns": {200, `{"data":[
+			{"id":"c-rust","game":"Rust","name":"Rust Drops","status":"active",
+			 "connect_url":"https://kick.com/connect/steam",
+			 "rewards":[{"id":"ben1","name":"Crate","required_minutes":60}]}
+		]}`},
+		// No progress yet (freshly linked, never watched) — the old code read
+		// this as "not linked" and blocked mining.
+		"https://web.kick.com/api/v1/drops/progress": {200, `{"data":[]}`},
+	}}
+	b := withFake(f)
+
+	camps, err := b.ListActiveCampaigns(context.Background(), sess("acc1"))
+	require.NoError(t, err)
+	require.Len(t, camps, 1)
+	assert.True(t, camps[0].AccountLinked, "connect_url campaign with no progress should be optimistically linked (mineable)")
+	assert.Equal(t, "https://kick.com/connect/steam", camps[0].AccountLinkURL, "connect URL still surfaced for the user")
+}
+
+func TestKickBackend_ListActiveCampaigns_DefaultRequiredMinutes(t *testing.T) {
+	f := &fakeDoer{resp: map[string]fakeResp{
+		"https://web.kick.com/api/v1/drops/campaigns": {200, `{"data":[
+			{"id":"c1","game":"Rust","name":"Drops","status":"active",
+			 "rewards":[{"id":"b1","name":"Reward"}]}
+		]}`},
+	}}
+	b := withFake(f)
+	camps, err := b.ListActiveCampaigns(context.Background(), sess("acc1"))
+	require.NoError(t, err)
+	require.Len(t, camps, 1)
+	require.Len(t, camps[0].Benefits, 1)
+	assert.Equal(t, 120, camps[0].Benefits[0].RequiredMinutes)
+}
+
+func TestKickBackend_InventoryProgress(t *testing.T) {
+	// Live-verified shape: progress nests rewards under each campaign, and
+	// reward.progress is the FRACTION watched (minutes = progress*required_units).
+	f := &fakeDoer{resp: map[string]fakeResp{
+		"https://web.kick.com/api/v1/drops/progress": {200, `{"data":[
+			{"id":"c1","name":"Rust Drops","progress_units":45,"rewards":[
+				{"id":"d1","claimed":false,"progress":0.75,"required_units":60},
+				{"id":"d2","claimed":true,"progress":1,"required_units":30}
+			]}
+		],"message":"Success"}`},
+	}}
+	b := withFake(f)
+	pr, err := b.InventoryProgress(context.Background(), sess("acc1"))
+	require.NoError(t, err)
+	require.Len(t, pr, 2)
+	assert.Equal(t, "d1", pr[0].BenefitID)
+	assert.Equal(t, 45, pr[0].MinutesWatched) // round(0.75 * 60)
+	assert.False(t, pr[0].Claimed)
+	assert.Equal(t, "d2", pr[1].BenefitID)
+	assert.Equal(t, 30, pr[1].MinutesWatched) // round(1 * 30)
+	assert.True(t, pr[1].Claimed)
+}
+
+func TestKickBackend_Claim_PostsRewardAndCampaign(t *testing.T) {
+	f := &fakeDoer{resp: map[string]fakeResp{
+		"https://web.kick.com/api/v1/drops/claim": {200, `{}`},
+	}}
+	b := withFake(f)
+	err := b.Claim(context.Background(), sess("acc1"), platform.DropBenefit{ID: "rew1", CampaignID: "camp1"})
+	require.NoError(t, err)
+	require.Len(t, f.calls, 1)
+	assert.Equal(t, "POST", f.calls[0].method)
+	assert.Equal(t, "https://web.kick.com/api/v1/drops/claim", f.calls[0].path)
+	assert.Contains(t, f.calls[0].body, `"reward_id":"rew1"`)
+	assert.Contains(t, f.calls[0].body, `"campaign_id":"camp1"`)
+}
+
+func TestKickBackend_ListEligibleChannels_LiveCampaignChannel(t *testing.T) {
+	f := &fakeDoer{resp: map[string]fakeResp{
+		// tippie is live (data present), bob is offline (data null).
+		"https://kick.com/api/v2/channels/tippie/livestream": {200, `{"data":{"id":999,"viewer_count":50}}`},
+		"https://kick.com/api/v2/channels/bob/livestream":    {200, `{"data":null}`},
+	}}
+	b := withFake(f)
+	// Channels (slug+channelId) come from the campaigns payload, cached here.
+	b.campaignChannels["c1"] = []kickChannel{{Slug: "bob", ID: "5"}, {Slug: "tippie", ID: "27589"}}
+	out, err := b.ListEligibleChannels(context.Background(), sess("acc1"),
+		platform.Campaign{ID: "c1", Game: "Rust"})
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	assert.Equal(t, "tippie", out[0].Channel)
+	// ChannelID is the CHANNEL id (for the viewer-WS handshake), not livestream id.
+	assert.Equal(t, "27589", out[0].ChannelID)
+	assert.Equal(t, 50, out[0].ViewerCount)
+}
+
+// An OPEN campaign (no channels of its own) must borrow the category-wide pool
+// of participating channels gathered from sibling campaigns — that's how the
+// daemon finds a live Rust channel for "Kick Off 2 - General Drops" et al.
+// Verifies liveness + category before committing (no junk picks).
+func TestKickBackend_OpenCampaignBorrowsCategoryPool(t *testing.T) {
+	f := &fakeDoer{resp: map[string]fakeResp{
+		"https://web.kick.com/api/v1/drops/campaigns": {200, `{"data":[
+			{"id":"c-A","game":"Rust","name":"A","status":"active",
+			 "channels":[{"slug":"tippie","id":"27589"}],
+			 "rewards":[{"id":"b1","required_units":60}]},
+			{"id":"c-B","game":"Rust","name":"B (open)","status":"active",
+			 "rewards":[{"id":"b2","required_units":60}]}
+		]}`},
+		"https://kick.com/api/v2/channels/tippie/livestream": {200, `{"data":{"id":999,"viewer_count":50,"categories":[{"name":"Rust","slug":"rust"}]}}`},
+	}}
+	b := withFake(f)
+	_, err := b.ListActiveCampaigns(context.Background(), sess("acc1"))
+	require.NoError(t, err)
+
+	// c-B has no channels of its own; it should borrow tippie from the Rust pool.
+	out, err := b.ListEligibleChannels(context.Background(), sess("acc1"),
+		platform.Campaign{ID: "c-B", Game: "Rust"})
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	assert.Equal(t, "tippie", out[0].Channel)
+	assert.Equal(t, "27589", out[0].ChannelID)
+}
+
+// A live channel streaming a DIFFERENT game than the campaign must be rejected
+// (watching it accrues nothing) — guards against the old generic-feed junk.
+func TestKickBackend_RejectsWrongCategoryChannel(t *testing.T) {
+	f := &fakeDoer{resp: map[string]fakeResp{
+		"https://kick.com/api/v2/channels/wrong/livestream": {200, `{"data":{"id":1,"viewer_count":9,"categories":[{"name":"Left 4 Dead 2","slug":"left-4-dead-2"}]}}`},
+	}}
+	b := withFake(f)
+	b.campaignChannels["c1"] = []kickChannel{{Slug: "wrong", ID: "1"}}
+	out, err := b.ListEligibleChannels(context.Background(), sess("acc1"),
+		platform.Campaign{ID: "c1", Game: "Rust"})
+	require.NoError(t, err)
+	assert.Empty(t, out)
+}
+
+// --- open-campaign directory fallback (issue #60) ---------------------------
+//
+// An OPEN campaign whose category pool is EMPTY (no sibling campaign embeds
+// channels — e.g. "WoW Forever", the only WoW campaign) must fall back to the
+// public /stream/livestreams/{category} directory, with every discovered
+// candidate still verified live + on-category by probeLive.
+
+func TestKickBackend_OpenCampaignDirectoryFallback(t *testing.T) {
+	f := &fakeDoer{resp: map[string]fakeResp{
+		// One OPEN WoW campaign, no channels anywhere in the payload.
+		"https://web.kick.com/api/v1/drops/campaigns": {200, `{"data":[
+			{"id":"c-wow","game":"World of Warcraft","name":"WoW Forever","status":"active",
+			 "rewards":[{"id":"b1","required_units":60}]}
+		]}`},
+		// The public directory feed (2026-10-03 live shape: paginated, entries
+		// carry their own categories). Includes one off-category entry that
+		// the client-side filter must drop before probing.
+		"https://kick.com/stream/livestreams/world-of-warcraft?page=1": {200, `{"current_page":1,"data":[
+			{"id":111,"is_live":true,"viewer_count":4200,"channel":{"slug":"rewardstation"},
+			 "categories":[{"name":"World of Warcraft","slug":"world-of-warcraft"}]},
+			{"id":222,"is_live":true,"viewer_count":80,"channel":{"slug":"wowstreamer"},
+			 "categories":[{"name":"World of Warcraft","slug":"world-of-warcraft"}]},
+			{"id":333,"is_live":true,"viewer_count":5,"channel":{"slug":"slotsfan"},
+			 "categories":[{"name":"Slots","slug":"slots"}]}
+		]}`},
+		// probeLive verification: both live + streaming the campaign's game.
+		"https://kick.com/api/v2/channels/rewardstation/livestream": {200, `{"data":{"id":111,"viewer_count":4200,"categories":[{"name":"World of Warcraft","slug":"world-of-warcraft"}]}}`},
+		"https://kick.com/api/v2/channels/wowstreamer/livestream":   {200, `{"data":{"id":222,"viewer_count":80,"categories":[{"name":"World of Warcraft","slug":"world-of-warcraft"}]}}`},
+	}}
+	b := withFake(f)
+	_, err := b.ListActiveCampaigns(context.Background(), sess("acc1"))
+	require.NoError(t, err)
+
+	out, err := b.ListEligibleChannels(context.Background(), sess("acc1"),
+		platform.Campaign{ID: "c-wow", Game: "World of Warcraft"})
+	require.NoError(t, err)
+	require.Len(t, out, 2)
+	// Viewer-sorted: biggest first so probeLive's cap lands on stable channels.
+	assert.Equal(t, "rewardstation", out[0].Channel)
+	assert.Equal(t, "wowstreamer", out[1].Channel)
+	// ChannelID falls back to the livestream id for directory-discovered
+	// slugs (the watch handshake accepts it).
+	assert.Equal(t, "111", out[0].ChannelID)
+
+	// The directory was addressed with the slug derived from the game name
+	// (payload carried no game_slug), and the off-category entry was never
+	// probed.
+	assert.Contains(t, f.calls, fakeCall{method: "GET", path: "https://kick.com/stream/livestreams/world-of-warcraft?page=1"})
+	for _, c := range f.calls {
+		assert.NotContains(t, c.path, "slotsfan", "off-category entry must be filtered before probing")
+	}
+}
+
+// A payload-provided game_slug is authoritative: the directory must be
+// addressed with it, not the name-derived slug.
+func TestKickBackend_DirectoryFallbackUsesPayloadSlug(t *testing.T) {
+	f := &fakeDoer{resp: map[string]fakeResp{
+		"https://web.kick.com/api/v1/drops/campaigns": {200, `{"data":[
+			{"id":"c1","game":"Some Game","game_slug":"the-real-slug","status":"active",
+			 "rewards":[{"id":"b1","required_units":60}]}
+		]}`},
+		"https://kick.com/stream/livestreams/the-real-slug?page=1": {200, `{"data":[
+			{"id":9,"is_live":true,"viewer_count":10,"channel":{"slug":"someone"},
+			 "categories":[{"name":"Some Game","slug":"the-real-slug"}]}
+		]}`},
+		"https://kick.com/api/v2/channels/someone/livestream": {200, `{"data":{"id":9,"viewer_count":10,"categories":[{"name":"Some Game"}]}}`},
+	}}
+	b := withFake(f)
+	_, err := b.ListActiveCampaigns(context.Background(), sess("acc1"))
+	require.NoError(t, err)
+
+	out, err := b.ListEligibleChannels(context.Background(), sess("acc1"),
+		platform.Campaign{ID: "c1", Game: "Some Game"})
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	assert.Equal(t, "someone", out[0].Channel)
+	assert.Contains(t, f.calls, fakeCall{method: "GET", path: "https://kick.com/stream/livestreams/the-real-slug?page=1"})
+}
+
+// The junk guard that got the old generic feed removed must hold for the
+// directory fallback too — at BOTH layers: entries whose embedded categories
+// don't match are dropped client-side (never probed), and anything that slips
+// through is rejected by probeLive's own category check.
+func TestKickBackend_DirectoryFallbackRejectsWrongCategory(t *testing.T) {
+	f := &fakeDoer{resp: map[string]fakeResp{
+		"https://web.kick.com/api/v1/drops/campaigns": {200, `{"data":[
+			{"id":"c1","game":"Rust","status":"active","rewards":[{"id":"b1","required_units":60}]}
+		]}`},
+		// Directory returns channels on another game (the global-feed reality).
+		"https://kick.com/stream/livestreams/rust?page=1": {200, `{"data":[
+			{"id":7,"is_live":true,"viewer_count":5,"channel":{"slug":"slotsfan"},
+			 "categories":[{"name":"Slots","slug":"slots"}]}
+		]}`},
+		// probeLive verification for slotsfan would say Slots — but the
+		// client-side filter must keep it from ever being probed.
+		"https://kick.com/api/v2/channels/slotsfan/livestream": {200, `{"data":{"id":7,"viewer_count":5,"categories":[{"name":"Slots"}]}}`},
+	}}
+	b := withFake(f)
+	_, err := b.ListActiveCampaigns(context.Background(), sess("acc1"))
+	require.NoError(t, err)
+
+	out, err := b.ListEligibleChannels(context.Background(), sess("acc1"),
+		platform.Campaign{ID: "c1", Game: "Rust"})
+	require.NoError(t, err)
+	assert.Empty(t, out, "wrong-category directory channels must not be returned")
+	for _, c := range f.calls {
+		assert.NotContains(t, c.path, "slotsfan", "wrong-category entry must be filtered before probing")
+	}
+}
+
+// A RESTRICTED campaign (own channels[]) must never consult the directory —
+// only its listed channels can accrue.
+func TestKickBackend_RestrictedCampaignSkipsDirectory(t *testing.T) {
+	f := &fakeDoer{resp: map[string]fakeResp{
+		// Restricted campaign with one offline channel.
+		"https://web.kick.com/api/v1/drops/campaigns": {200, `{"data":[
+			{"id":"c1","game":"Rust","status":"active",
+			 "channels":[{"slug":"offlinechan","id":"3"}],
+			 "rewards":[{"id":"b1","required_units":60}]}
+		]}`},
+		"https://kick.com/api/v2/channels/offlinechan/livestream": {200, `{"data":null}`},
+		// If the directory were consulted it would return a live channel —
+		// the test asserts it is NOT called.
+		"https://kick.com/stream/livestreams/rust?page=1": {200, `{"data":[
+			{"id":55,"is_live":true,"viewer_count":900,"channel":{"slug":"should-not-appear"},
+			 "categories":[{"name":"Rust","slug":"rust"}]}
+		]}`},
+	}}
+	b := withFake(f)
+	_, err := b.ListActiveCampaigns(context.Background(), sess("acc1"))
+	require.NoError(t, err)
+
+	out, err := b.ListEligibleChannels(context.Background(), sess("acc1"),
+		platform.Campaign{ID: "c1", Game: "Rust"})
+	require.NoError(t, err)
+	assert.Empty(t, out, "offline restricted channel yields nothing")
+	for _, c := range f.calls {
+		assert.NotContains(t, c.path, "/stream/livestreams/",
+			"restricted campaign must not hit the directory feed")
+	}
+}
+
+// Directory-discovered slugs merge into the category pool: a second
+// ListEligibleChannels finds them even when the directory subsequently
+// 404s — the pool, not the feed, is the durable candidate source.
+func TestKickBackend_DirectoryDiscoveryPoolsForLaterPicks(t *testing.T) {
+	f := &fakeDoer{resp: map[string]fakeResp{
+		"https://web.kick.com/api/v1/drops/campaigns": {200, `{"data":[
+			{"id":"c1","game":"Rust","status":"active","rewards":[{"id":"b1","required_units":60}]}
+		]}`},
+		"https://kick.com/stream/livestreams/rust?page=1": {200, `{"data":[
+			{"id":31,"is_live":true,"viewer_count":100,"channel":{"slug":"pooledchan"},
+			 "categories":[{"name":"Rust","slug":"rust"}]}
+		]}`},
+		"https://kick.com/api/v2/channels/pooledchan/livestream": {200, `{"data":{"id":31,"viewer_count":100,"categories":[{"name":"Rust"}]}}`},
+	}}
+	b := withFake(f)
+	_, err := b.ListActiveCampaigns(context.Background(), sess("acc1"))
+	require.NoError(t, err)
+
+	// First pick: directory fallback discovers + verifies pooledchan.
+	out, err := b.ListEligibleChannels(context.Background(), sess("acc1"),
+		platform.Campaign{ID: "c1", Game: "Rust"})
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	assert.Equal(t, "pooledchan", out[0].Channel)
+
+	// Kill the directory feed; the second pick must still resolve via the pool.
+	f.resp["https://kick.com/stream/livestreams/rust?page=1"] = fakeResp{404, `{}`}
+	out2, err := b.ListEligibleChannels(context.Background(), sess("acc1"),
+		platform.Campaign{ID: "c1", Game: "Rust"})
+	require.NoError(t, err)
+	require.Len(t, out2, 1)
+	assert.Equal(t, "pooledchan", out2[0].Channel)
+}
+
+// Shell rows must not populate the channel pools: a game nobody mines
+// shouldn't contribute candidates (or claim IDs) to mining state.
+func TestKickBackend_ShellRowsSkipChannelPools(t *testing.T) {
+	f := &fakeDoer{resp: map[string]fakeResp{
+		"https://web.kick.com/api/v1/drops/campaigns": {200, `{"data":[
+			{"id":"c-shell","game":"ShellGame","name":"Not Whitelisted","status":"active",
+			 "channels":[{"slug":"shellchan","id":"1"}],
+			 "rewards":[{"id":"b1","required_units":60}]}
+		]}`},
+	}}
+	b := withFake(f)
+	s := sess("acc1")
+	s.GameFilter = func(g string) bool { return g == "Rust" } // nothing whitelisted matches
+	_, err := b.ListActiveCampaigns(context.Background(), s)
+	require.NoError(t, err)
+
+	b.mu.Lock()
+	_, hasCampaign := b.campaignChannels["c-shell"]
+	_, hasCategory := b.categoryChannels["ShellGame"]
+	b.mu.Unlock()
+	assert.False(t, hasCampaign, "shell row must not populate campaignChannels")
+	assert.False(t, hasCategory, "shell row must not populate categoryChannels")
+}
+
+func TestKickBackend_DeviceLoginRejected(t *testing.T) {
+	b := New(nil, nil, "grubdrops-browser-{slug}", 9090, 10*time.Minute)
+	_, err := b.StartDeviceLogin(context.Background())
+	require.Error(t, err)
+}
+
+// --- channel registration (manual fallback) — pure, no transport ----------
+
+func TestKickBackend_RegisterChannelExposesInList(t *testing.T) {
+	b := New(nil, nil, "grubdrops-browser-{slug}", 9090, 10*time.Minute)
+	b.RegisterChannel("acc1", "fakestreamer")
+	// Empty campaign so the live-discovery paths skip and we hit the manual
+	// fallback (no cookies in the session anyway).
+	out, err := b.ListEligibleChannels(context.Background(), platform.Session{AccountID: "acc1"}, platform.Campaign{})
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	assert.Equal(t, "fakestreamer", out[0].Channel)
+}
+
+func TestKickBackend_RegisterChannelsMulti(t *testing.T) {
+	b := New(nil, nil, "grubdrops-browser-{slug}", 9090, 10*time.Minute)
+	b.RegisterChannels("acc1", []string{"alice", "bob", "carol"})
+	out, err := b.ListEligibleChannels(context.Background(), platform.Session{AccountID: "acc1"}, platform.Campaign{})
+	require.NoError(t, err)
+	require.Len(t, out, 3)
+	names := map[string]bool{}
+	for _, s := range out {
+		names[s.Channel] = true
+	}
+	assert.True(t, names["alice"] && names["bob"] && names["carol"])
+}
+
+func TestKickBackend_ListEligibleChannelsScopedToAccount(t *testing.T) {
+	b := New(nil, nil, "grubdrops-browser-{slug}", 9090, 10*time.Minute)
+	b.RegisterChannels("acc1", []string{"alice", "bob"})
+	b.RegisterChannels("acc2", []string{"carol"})
+
+	out1, err := b.ListEligibleChannels(context.Background(), platform.Session{AccountID: "acc1"}, platform.Campaign{})
+	require.NoError(t, err)
+	require.Len(t, out1, 2)
+
+	out2, err := b.ListEligibleChannels(context.Background(), platform.Session{AccountID: "acc2"}, platform.Campaign{})
+	require.NoError(t, err)
+	require.Len(t, out2, 1)
+	assert.Equal(t, "carol", out2[0].Channel)
+
+	outNone, err := b.ListEligibleChannels(context.Background(), platform.Session{AccountID: "acc3"}, platform.Campaign{})
+	require.NoError(t, err)
+	assert.Empty(t, outNone)
+}
+
+func TestKickBackend_RegisterChannels_DedupesAndTrims(t *testing.T) {
+	b := New(nil, nil, "grubdrops-browser-{slug}", 9090, 10*time.Minute)
+	b.RegisterChannels("acc1", []string{" alice ", "Alice", "bob", "", " bob ", "carol"})
+	assert.Equal(t, []string{"alice", "bob", "carol"}, b.Channels("acc1"))
+}
+
+func TestKickBackend_AllowedChannelCountDistinct(t *testing.T) {
+	b := New(nil, nil, "grubdrops-browser-{slug}", 9090, 10*time.Minute)
+	assert.Equal(t, 0, b.AllowedChannelCount("anything"))
+	b.RegisterChannel("acc1", "alice")
+	b.RegisterChannel("acc2", "bob")
+	b.RegisterChannel("acc3", "alice")
+	assert.Equal(t, 2, b.AllowedChannelCount("kick-inventory"))
+}
+
+// EnableBrowserWatch is a no-op (and must NOT flip browserWatch) when the
+// backend has no sidecar client — otherwise StartWatch would dereference a
+// nil client. With no sidecar / browser-watch off, StartWatch takes the
+// pure-WebSocket watch path instead (kick_watch_mode = "ws").
+func TestKickBackend_EnableBrowserWatch_NilClientNoOp(t *testing.T) {
+	b := New(nil, nil, "grubdrops-browser-{slug}", 9090, 10*time.Minute)
+	b.EnableBrowserWatch()
+	assert.False(t, b.browserWatch, "browser-watch must stay off without a sidecar client")
+}
+
+// Heartbeat/StopWatch dispatch on the watch-handle's concrete Internal
+// type. An unknown/zero handle is an error for Heartbeat (so the watcher
+// re-picks) and a benign no-op for StopWatch (idempotent teardown).
+func TestKickBackend_WatchHandleDispatch(t *testing.T) {
+	b := New(nil, nil, "grubdrops-browser-{slug}", 9090, 10*time.Minute)
+
+	// Unknown handle type -> Heartbeat errors, StopWatch is a no-op.
+	bad := platform.WatchHandle{Channel: "x", Internal: struct{}{}}
+	assert.Error(t, b.Heartbeat(context.Background(), bad))
+	assert.NoError(t, b.StopWatch(context.Background(), bad))
+
+	// Zero handle (Internal == nil) behaves the same.
+	zero := platform.WatchHandle{Channel: "x"}
+	assert.Error(t, b.Heartbeat(context.Background(), zero))
+	assert.NoError(t, b.StopWatch(context.Background(), zero))
+}
+
+// preferReliableChannels moves a known always-live broadcaster (oilrats) to
+// the front of an OPEN campaign's category pool so the watcher lands on it,
+// without adding/dropping channels or disturbing the rest's order.
+func TestPreferReliableChannels(t *testing.T) {
+	pool := []kickChannel{
+		{Slug: "welyn", ID: "1"},
+		{Slug: "oilrats", ID: "2"},
+		{Slug: "trausi", ID: "3"},
+	}
+	got := preferReliableChannels(pool)
+	require.Len(t, got, 3)
+	assert.Equal(t, "oilrats", got[0].Slug, "oilrats should sort first")
+	assert.Equal(t, "welyn", got[1].Slug, "rest keep original order")
+	assert.Equal(t, "trausi", got[2].Slug)
+
+	// No reliable channel present -> unchanged.
+	none := []kickChannel{{Slug: "a"}, {Slug: "b"}}
+	assert.Equal(t, none, preferReliableChannels(none))
+}
+
+// SweepCompletedClaims claims every reward at 100% that isn't already granted,
+// skips in-progress and already-claimed rewards, and posts reward_id +
+// campaign_id per claim.
+func TestKickBackend_SweepCompletedClaims(t *testing.T) {
+	f := &fakeDoer{resp: map[string]fakeResp{
+		"https://web.kick.com/api/v1/drops/progress": {200, `{"data":[
+			{"id":"camp1","rewards":[
+				{"id":"done-unclaimed","name":"Box","progress":1,"claimed":false,"required_units":120},
+				{"id":"already-claimed","name":"Crossbow","progress":1,"claimed":true,"required_units":120},
+				{"id":"in-progress","name":"Door","progress":0.5,"claimed":false,"required_units":120}
+			]}
+		],"message":"Success"}`},
+		"https://web.kick.com/api/v1/drops/claim": {200, `{}`},
+	}}
+	b := withFake(f)
+	claimed, err := b.SweepCompletedClaims(context.Background(), sess("acc1"))
+	require.NoError(t, err)
+	// Only the completed-but-unclaimed reward is claimed.
+	require.Len(t, claimed, 1)
+	assert.Equal(t, "Box", claimed[0].Title)
+	// Exactly one claim POST fired, for the right reward+campaign.
+	var claimCalls int
+	for _, c := range f.calls {
+		if c.path == "https://web.kick.com/api/v1/drops/claim" {
+			claimCalls++
+			assert.Contains(t, c.body, `"reward_id":"done-unclaimed"`)
+			assert.Contains(t, c.body, `"campaign_id":"camp1"`)
+		}
+	}
+	assert.Equal(t, 1, claimCalls, "exactly one completed reward should be claimed")
+}
+
+// TestKickRewardsToBenefits_MapsAndDefaultsMinutes proves the reward→benefit
+// mapping: fields map across, and a reward with no required minutes defaults to
+// 120 (Kick drops typically need ~2h), matching ListActiveCampaigns.
+func TestKickRewardsToBenefits_MapsAndDefaultsMinutes(t *testing.T) {
+	rewards := []kickReward{
+		{ID: "r1", Name: "Skin", RequiredMinutes: 90, ImageURL: "http://img/r1.png"},
+		{ID: "r2", Name: "Emote", RequiredMinutes: 0, ImageURL: "http://img/r2.png"},
+	}
+	got := kickRewardsToBenefits("camp-1", rewards)
+
+	require.Len(t, got, 2)
+	require.Equal(t, "camp-1", got[0].CampaignID)
+	require.Equal(t, 90, got[0].RequiredMinutes)
+	require.Equal(t, "Skin", got[0].Name)
+	require.Equal(t, "http://img/r1.png", got[0].ImageURL)
+	require.Equal(t, 120, got[1].RequiredMinutes, "0 required minutes defaults to 120")
+}
+
+func TestKickBackend_FetchAvatar(t *testing.T) {
+	// Top-level profile_pic shape.
+	f := &fakeDoer{resp: map[string]fakeResp{
+		"https://kick.com/api/v1/user": {200, `{"id":42,"username":"grubber","profile_pic":"https://files.kick.com/images/user/42/profile_image/conversion/abc-fullsize.webp"}`},
+	}}
+	b := withFake(f)
+	url, err := b.FetchAvatar(context.Background(), sess("acc1"))
+	require.NoError(t, err)
+	assert.Equal(t, "https://files.kick.com/images/user/42/profile_image/conversion/abc-fullsize.webp", url)
+
+	// Nested user{} shape.
+	f2 := &fakeDoer{resp: map[string]fakeResp{
+		"https://kick.com/api/v1/user": {200, `{"user":{"profile_pic":"https://files.kick.com/images/user/7/profile_image/x.webp"}}`},
+	}}
+	url2, err := withFake(f2).FetchAvatar(context.Background(), sess("acc1"))
+	require.NoError(t, err)
+	assert.Equal(t, "https://files.kick.com/images/user/7/profile_image/x.webp", url2)
+
+	// No avatar set -> empty string, no error (caller keeps letter circle).
+	f3 := &fakeDoer{resp: map[string]fakeResp{
+		"https://kick.com/api/v1/user": {200, `{"id":9,"username":"nopic"}`},
+	}}
+	url3, err := withFake(f3).FetchAvatar(context.Background(), sess("acc1"))
+	require.NoError(t, err)
+	assert.Empty(t, url3)
+}
+
+// TestKickBackend_SweepSkipsLinkRequiredAfterFirst proves the fix for the
+// per-minute claim spam: a reward whose claim Kick rejects with a connect_url
+// (needs an external account link) is attempted ONCE, recorded, then skipped
+// on subsequent sweeps instead of re-POSTing (and re-logging) every poll.
+func TestKickBackend_SweepSkipsLinkRequiredAfterFirst(t *testing.T) {
+	f := &fakeDoer{resp: map[string]fakeResp{
+		"https://web.kick.com/api/v1/drops/progress": {200, `{"data":[
+			{"id":"camp1","rewards":[
+				{"id":"needs-link","name":"Riot Icon","progress":1,"claimed":false,"required_units":120}
+			]}
+		],"message":"Success"}`},
+		// Kick rejects the claim: account must link Riot first (connect_url).
+		"https://web.kick.com/api/v1/drops/claim": {400, `{"data":{"connect_url":"https://auth.riotgames.com/authorize?client_id=x"}}`},
+	}}
+	b := withFake(f)
+
+	// Two consecutive sweeps (as the periodic poll would do).
+	_, err := b.SweepCompletedClaims(context.Background(), sess("acc1"))
+	require.NoError(t, err, "link-required must not be a fatal sweep error")
+	_, err = b.SweepCompletedClaims(context.Background(), sess("acc1"))
+	require.NoError(t, err)
+
+	var claimCalls int
+	for _, c := range f.calls {
+		if c.path == "https://web.kick.com/api/v1/drops/claim" {
+			claimCalls++
+		}
+	}
+	assert.Equal(t, 1, claimCalls, "link-required reward must be POSTed once, then skipped on later sweeps")
+
+	b.mu.Lock()
+	marked := b.needsLink["acc1:needs-link"]
+	b.mu.Unlock()
+	assert.True(t, marked, "reward must be recorded as needing an account link")
+}
+
+// TestKickClaim_MapsConnectURLToNeedsLinkError proves api.Claim surfaces a
+// connect_url rejection as ErrClaimNeedsLink (with the URL) rather than an
+// opaque status error.
+func TestKickClaim_MapsConnectURLToNeedsLinkError(t *testing.T) {
+	f := &fakeDoer{resp: map[string]fakeResp{
+		"https://web.kick.com/api/v1/drops/claim": {400, `{"data":{"connect_url":"https://auth.riotgames.com/authorize?client_id=x"}}`},
+	}}
+	a := &api{d: f}
+	err := a.Claim(context.Background(), sess("acc1"), "r1", "c1")
+	require.Error(t, err)
+	require.True(t, errors.Is(err, ErrClaimNeedsLink), "connect_url rejection must map to ErrClaimNeedsLink")
+	var le *ClaimNeedsLinkError
+	require.True(t, errors.As(err, &le))
+	assert.Equal(t, "https://auth.riotgames.com/authorize?client_id=x", le.ConnectURL)
+
+	// A plain error (no connect_url) must NOT be classified as needs-link.
+	f2 := &fakeDoer{resp: map[string]fakeResp{
+		"https://web.kick.com/api/v1/drops/claim": {500, `{"error":"boom"}`},
+	}}
+	a2 := &api{d: f2}
+	err2 := a2.Claim(context.Background(), sess("acc1"), "r1", "c1")
+	require.Error(t, err2)
+	assert.False(t, errors.Is(err2, ErrClaimNeedsLink))
+}
+
+// TestKickBackend_LinkRejectionFlagsCampaign proves a link-required claim
+// rejection marks that campaign ClaimNeedsLink for the same account only,
+// keeps it mineable, and fills a missing AccountLinkURL from the connect_url.
+func TestKickBackend_LinkRejectionFlagsCampaign(t *testing.T) {
+	f := &fakeDoer{resp: map[string]fakeResp{
+		"https://web.kick.com/api/v1/drops/progress": {200, `{"data":[
+			{"id":"camp1","rewards":[
+				{"id":"needs-link","name":"Riot Icon","progress":1,"claimed":false,"required_units":120}
+			]}
+		],"message":"Success"}`},
+		"https://web.kick.com/api/v1/drops/claim": {400, `{"data":{"connect_url":"https://auth.riotgames.com/authorize?client_id=x"}}`},
+		"https://web.kick.com/api/v1/drops/campaigns": {200, `{"data":[
+			{"id":"camp1","game":"VALORANT","name":"Valo Drops","status":"active",
+			 "rewards":[{"id":"needs-link","name":"Riot Icon","required_minutes":120}]}
+		]}`},
+	}}
+	b := withFake(f)
+	camps, err := b.ListActiveCampaigns(context.Background(), sess("acc1"))
+	require.NoError(t, err)
+	require.Len(t, camps, 1)
+	assert.False(t, camps[0].ClaimNeedsLink, "no rejection seen yet")
+
+	_, err = b.SweepCompletedClaims(context.Background(), sess("acc1"))
+	require.NoError(t, err)
+
+	camps, err = b.ListActiveCampaigns(context.Background(), sess("acc1"))
+	require.NoError(t, err)
+	require.Len(t, camps, 1)
+	assert.True(t, camps[0].ClaimNeedsLink)
+	assert.True(t, camps[0].AccountLinked, "flag must not block mining")
+	assert.Equal(t, "https://auth.riotgames.com/authorize?client_id=x", camps[0].AccountLinkURL)
+
+	other, err := b.ListActiveCampaigns(context.Background(), sess("acc2"))
+	require.NoError(t, err)
+	require.Len(t, other, 1)
+	assert.False(t, other[0].ClaimNeedsLink, "another account is not flagged")
+}
+
+func TestLookupChannel(t *testing.T) {
+	f := &fakeDoer{resp: map[string]fakeResp{
+		"https://kick.com/api/v2/channels/tippie/livestream": {200, `{"data":{"id":999,"viewer_count":50,"categories":[{"name":"Rust","slug":"rust"}]}}`},
+		"https://kick.com/api/v2/channels/tippie":            {200, `{"id":27589,"livestream":{"id":999,"is_live":true}}`},
+		"https://kick.com/api/v2/channels/bob/livestream":    {200, `{"data":null}`},
+		"https://kick.com/api/v2/channels/ghost/livestream":  {404, `{}`},
+		"https://kick.com/api/v2/channels/broken/livestream": {500, `oops`},
+	}}
+	b := withFake(f)
+	ctx := context.Background()
+
+	st, live, err := b.LookupChannel(ctx, sess("acc1"), "tippie")
+	require.NoError(t, err)
+	require.True(t, live)
+	assert.Equal(t, "tippie", st.Channel)
+	assert.Equal(t, "27589", st.ChannelID)
+	assert.Equal(t, "999", st.BroadcastID)
+	assert.Equal(t, 50, st.ViewerCount)
+	assert.Equal(t, "Rust", st.Game)
+
+	_, live, err = b.LookupChannel(ctx, sess("acc1"), "bob")
+	require.NoError(t, err)
+	assert.False(t, live)
+
+	_, live, err = b.LookupChannel(ctx, sess("acc1"), "ghost")
+	require.NoError(t, err)
+	assert.False(t, live)
+
+	_, live, err = b.LookupChannel(ctx, sess("acc1"), "broken")
+	require.Error(t, err)
+	assert.False(t, live)
+}

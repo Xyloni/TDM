@@ -1,0 +1,730 @@
+package kick
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"math"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+
+	"github.com/aalejandrofer/grubdrops/internal/platform"
+)
+
+// ErrClaimNeedsLink signals that a Kick claim was rejected because the
+// account must first link an external platform account (Riot, Steam, …).
+// Kick returns a 4xx whose body carries a connect_url; such a reward can
+// never be claimed by the miner until the user links manually, so callers
+// must stop re-attempting it rather than re-POSTing every poll. Match with
+// errors.Is; the concrete *ClaimNeedsLinkError carries the connect_url.
+var ErrClaimNeedsLink = errors.New("kick claim: account link required")
+
+// ClaimNeedsLinkError is the concrete error behind ErrClaimNeedsLink,
+// carrying the connect_url Kick returned so the caller can surface it.
+type ClaimNeedsLinkError struct {
+	ConnectURL string
+	Status     int
+}
+
+func (e *ClaimNeedsLinkError) Error() string {
+	return fmt.Sprintf("kick claim: account link required (status %d): %s", e.Status, e.ConnectURL)
+}
+
+// Is matches ErrClaimNeedsLink and the platform-wide platform.ErrClaimNeedsLink
+// the runner checks.
+func (e *ClaimNeedsLinkError) Is(target error) bool {
+	return target == ErrClaimNeedsLink || target == platform.ErrClaimNeedsLink
+}
+
+// kickFilesBase is the CDN host for Kick reward/drop images. The drops
+// API returns image_url as a host-relative path (e.g.
+// "drops/reward-image/01k….png"); the UI needs an absolute URL. The real
+// host is ext.cdn.kick.com (Cloudflare-fronted). Images are proxied
+// through /img/kick anyway, which only trusts the path — this is for
+// completeness/back-compat.
+const kickFilesBase = "https://ext.cdn.kick.com/"
+
+// absImageURL turns a Kick image_url into an absolute URL. Already-absolute
+// URLs (http/https) and empty strings pass through unchanged.
+func absImageURL(u string) string {
+	u = strings.TrimSpace(u)
+	if u == "" || strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://") {
+		return u
+	}
+	return kickFilesBase + strings.TrimPrefix(u, "/")
+}
+
+// doer performs a single Kick HTTP call. Implemented by httpDoer (utls Chrome
+// fingerprint); an interface so tests can inject canned responses.
+type doer interface {
+	do(ctx context.Context, sess platform.Session, method, path string, body []byte) ([]byte, int, error)
+	getRaw(ctx context.Context, rawURL string) ([]byte, string, int, error)
+}
+
+// FetchImage pulls a Kick CDN asset (reward image) over the utls transport,
+// bypassing Cloudflare's hotlink 403. Returns bytes + Content-Type.
+func (a *api) FetchImage(ctx context.Context, rawURL string) ([]byte, string, int, error) {
+	return a.d.getRaw(ctx, rawURL)
+}
+
+// api wraps the utls transport with typed Kick endpoint calls. All paths are
+// the real endpoints reverse-engineered from Kick's Next.js bundles (see
+// project_kick_breakthrough_utls memory). Kick's /api/* 403s any CDP browser but
+// accepts this pure-HTTP Chrome-fingerprinted client.
+type api struct {
+	d doer
+}
+
+func newAPI() *api { return &api{d: newHTTPDoer(nil)} }
+
+// ---- Public channel discovery (no auth required) -------------------------
+
+// livestreamsResp is the /stream/livestreams/{category} shape (verified live
+// 2026-10-03). The feed is PAGINATED (per_page=5, ?page=N works) and — as of
+// that check — serves a GLOBAL feed that ignores the {category} path segment,
+// so entries must be filtered client-side against their embedded categories.
+// Each entry carries the channel slug and its own category list, which makes
+// that filter authoritative rather than inferred.
+type livestreamsResp struct {
+	CurrentPage int `json:"current_page"`
+	NextPageURL any `json:"next_page_url"` // string or null
+	Data        []struct {
+		ID           int64  `json:"id"` // livestream id (used for the watch ping)
+		SessionTitle string `json:"session_title"`
+		IsLive       bool   `json:"is_live"`
+		ViewerCount  int    `json:"viewer_count"`
+		Channel      struct {
+			Slug string `json:"slug"` // channel login, e.g. "tippie"
+		} `json:"channel"`
+		Categories []struct {
+			Name string `json:"name"`
+			Slug string `json:"slug"`
+		} `json:"categories"`
+	} `json:"data"`
+}
+
+// discoverMaxPages caps how many directory pages one fallback fetch walks
+// (per_page=5, so 4 pages ≈ 20 candidates — probeLive caps verification at
+// 12 anyway). Later watcher cycles keep scanning, so a category missing from
+// this window still gets picked up over successive picks.
+const discoverMaxPages = 4
+
+// DiscoverChannelsForCategory lists currently-live channels in a Kick category
+// (game). Public endpoint — works without a logged-in session. This is the
+// auto-discovery that removes manual one-channel-at-a-time entry.
+//
+// An entry qualifies when any of its embedded categories matches the wanted
+// one — by slug, or by display name against gameName (case/space-insensitive;
+// the campaign may only carry the display name). Matching client-side keeps
+// this correct whether or not the endpoint honors the category segment, and
+// the caller (probeLive) independently re-verifies every candidate is live
+// and on-category before it's committed, so a sloppy match can't produce a
+// junk pick.
+func (a *api) DiscoverChannelsForCategory(ctx context.Context, sess platform.Session, categorySlug, gameName string) ([]platform.Stream, error) {
+	out := []platform.Stream{}
+	for page := 1; page <= discoverMaxPages; page++ {
+		url := fmt.Sprintf("%s/stream/livestreams/%s?page=%d", discoveryBase, categorySlug, page)
+		body, status, err := a.d.do(ctx, sess, http.MethodGet, url, nil)
+		if err != nil {
+			if page > 1 {
+				break // earlier pages already parsed — return what we have
+			}
+			return nil, err
+		}
+		if status != 200 {
+			if page > 1 {
+				break
+			}
+			return nil, fmt.Errorf("livestreams %s: status %d", categorySlug, status)
+		}
+		var resp livestreamsResp
+		if err := json.Unmarshal(body, &resp); err != nil {
+			if page > 1 {
+				break
+			}
+			return nil, fmt.Errorf("decode livestreams: %w", err)
+		}
+		for _, s := range resp.Data {
+			if !s.IsLive || s.Channel.Slug == "" {
+				continue
+			}
+			if !entryMatchesCategory(s.Categories, categorySlug, gameName) {
+				continue
+			}
+			out = append(out, platform.Stream{
+				Channel:      s.Channel.Slug,
+				ViewerCount:  s.ViewerCount,
+				DropsEnabled: true,
+				ChannelID:    fmt.Sprintf("%d", s.ID), // livestream id — used by the watch ping
+			})
+		}
+		if len(resp.Data) == 0 {
+			break
+		}
+	}
+	return out, nil
+}
+
+// entryMatchesCategory reports whether any of the entry's embedded categories
+// is the wanted one. Slug match is exact; name match is case/space-insensitive
+// against the game's display name ("PUBG: BATTLEGROUNDS" vs "PUBG:
+// Battlegrounds" etc).
+func entryMatchesCategory(cats []struct {
+	Name string `json:"name"`
+	Slug string `json:"slug"`
+}, categorySlug, gameName string) bool {
+	for _, c := range cats {
+		if categorySlug != "" && strings.EqualFold(strings.TrimSpace(c.Slug), strings.TrimSpace(categorySlug)) {
+			return true
+		}
+		if gameName != "" && strings.EqualFold(strings.TrimSpace(c.Name), strings.TrimSpace(gameName)) {
+			return true
+		}
+	}
+	return false
+}
+
+// Avatar returns the authenticated account's profile-picture URL. AUTHED.
+//
+// Kick's web app reads the current user from kick.com/api/v1/user, whose
+// JSON carries the avatar under profile_pic (older shape) or
+// profilepic/user.profile_pic. We parse tolerantly because the exact shape
+// is undocumented and has drifted. Returns "" when no avatar is set.
+func (a *api) Avatar(ctx context.Context, sess platform.Session) (string, error) {
+	body, status, err := a.d.do(ctx, sess, http.MethodGet, discoveryBase+"/api/v1/user", nil)
+	if err != nil {
+		return "", err
+	}
+	if status != 200 {
+		return "", fmt.Errorf("kick user: status %d body %s", status, truncate(body, 200))
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(body, &obj); err != nil {
+		return "", fmt.Errorf("decode kick user: %w", err)
+	}
+	// Top-level profile_pic variants first.
+	if pic := mstr(obj, "profile_pic", "profilepic", "profile_picture", "avatar"); pic != "" {
+		return pic, nil
+	}
+	// Nested user{} object (some shapes wrap the identity).
+	if sub, ok := obj["user"].(map[string]any); ok {
+		if pic := mstr(sub, "profile_pic", "profilepic", "profile_picture", "avatar"); pic != "" {
+			return pic, nil
+		}
+	}
+	return "", nil
+}
+
+// ---- Authed drops endpoints ----------------------------------------------
+// NOTE: the response STRUCTS below are modelled on Kick's drops/all-campaigns
+// scrape shape + the JS bundle field names; they are PENDING verification
+// against a live authed response (run `cmd/kick-http <cookies> drops` with a
+// fresh session, then finalize). Field tags are the best-effort mapping.
+
+type kickCampaign struct {
+	ID         string
+	Name       string
+	Game       string
+	GameSlug   string // authoritative category slug when the payload carries one
+	GameImage  string // category cover image (category.image_url), absolute
+	Status     string
+	StartsAt   string
+	EndsAt     string
+	Rewards    []kickReward
+	Channels   []kickChannel // eligible channels (campaign.channels[])
+	ConnectURL string        // external account-link URL; non-empty = needs linking
+}
+
+// kickChannel is an eligible channel for a campaign. ID is the numeric
+// channel id (NOT the livestream id).
+type kickChannel struct {
+	Slug string
+	ID   string
+}
+
+type kickReward struct {
+	ID              string
+	Name            string
+	RequiredMinutes int
+	ImageURL        string
+}
+
+// Campaigns lists the account's active drop campaigns. AUTHED.
+//
+// The exact JSON shape is undocumented and unverified against a live authed
+// response, so we parse TOLERANTLY: accept {data:[]} / {campaigns:[]} / bare [],
+// and try several field-name variants per object. This maximises the chance the
+// real response parses on first contact with a fresh session.
+func (a *api) Campaigns(ctx context.Context, sess platform.Session) ([]kickCampaign, error) {
+	body, status, err := a.d.do(ctx, sess, http.MethodGet, dropsBase+"/api/v1/drops/campaigns", nil)
+	if err != nil {
+		return nil, err
+	}
+	if status != 200 {
+		return nil, fmt.Errorf("drops campaigns: status %d body %s", status, truncate(body, 200))
+	}
+	items, err := asList(body, "data", "campaigns", "drops")
+	if err != nil {
+		return nil, fmt.Errorf("decode campaigns: %w", err)
+	}
+	out := make([]kickCampaign, 0, len(items))
+	for _, m := range items {
+		c := kickCampaign{
+			ID:         mstr(m, "id", "campaign_id", "campaignId", "uuid"),
+			Name:       mstr(m, "name", "title"),
+			Game:       gameName(m),
+			GameSlug:   gameSlug(m),
+			GameImage:  gameImage(m),
+			Status:     mstr(m, "status", "state"),
+			StartsAt:   mstr(m, "starts_at", "startsAt", "start_at", "start_time"),
+			EndsAt:     mstr(m, "ends_at", "endsAt", "end_at", "end_time"),
+			ConnectURL: mstr(m, "connect_url", "connectUrl"),
+		}
+		for _, rm := range mlist(m, "rewards", "benefits", "drops", "tiers") {
+			c.Rewards = append(c.Rewards, kickReward{
+				ID:              mstr(rm, "id", "reward_id", "rewardId", "uuid"),
+				Name:            mstr(rm, "name", "title"),
+				RequiredMinutes: mnum(rm, "required_units", "required_minutes", "requiredMinutes", "required_time", "minutes", "required_watch_time"),
+				ImageURL:        absImageURL(mstr(rm, "image_url", "imageUrl", "image", "icon")),
+			})
+		}
+		// Eligible channels are embedded in the campaign payload (the
+		// separate /campaigns/{id}/livestreams endpoint returns 400). id is
+		// the channel id the viewer-WS handshake needs.
+		for _, ch := range mlist(m, "channels") {
+			if slug := mstr(ch, "slug", "username", "name"); slug != "" {
+				c.Channels = append(c.Channels, kickChannel{Slug: slug, ID: mstr(ch, "id", "channel_id", "channelId")})
+			}
+		}
+		out = append(out, c)
+	}
+	return out, nil
+}
+
+// Subcategory returns a category's display name from its slug. Public
+// endpoint on kick.com.
+func (a *api) Subcategory(ctx context.Context, sess platform.Session, slug string) (string, error) {
+	body, status, err := a.d.do(ctx, sess, http.MethodGet, discoveryBase+"/api/v1/subcategories/"+url.PathEscape(slug), nil)
+	if err != nil {
+		return "", err
+	}
+	if status != 200 {
+		return "", &statusError{what: "subcategory " + slug, status: status}
+	}
+	var r struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(body, &r); err != nil {
+		return "", fmt.Errorf("decode subcategory %s: %w", slug, err)
+	}
+	return strings.TrimSpace(r.Name), nil
+}
+
+// statusError is a non-200 HTTP response; callers can detect it with errors.As.
+type statusError struct {
+	what   string
+	status int
+}
+
+func (e *statusError) Error() string { return fmt.Sprintf("%s: status %d", e.what, e.status) }
+
+// ChannelLivestream reports whether a channel is live and, if so, its livestream
+// id (needed for the watch ping) + viewer count. Public endpoint on kick.com.
+// {data:null} = offline. Used to filter a campaign's eligible channels down to
+// the ones currently broadcasting.
+func (a *api) ChannelLivestream(ctx context.Context, sess platform.Session, slug string) (live bool, livestreamID string, viewers int, category string, err error) {
+	body, status, err := a.d.do(ctx, sess, http.MethodGet, discoveryBase+"/api/v2/channels/"+slug+"/livestream", nil)
+	if err != nil {
+		return false, "", 0, "", err
+	}
+	if status != 200 {
+		return false, "", 0, "", &statusError{what: "channel livestream " + slug, status: status}
+	}
+	var r struct {
+		Data *struct {
+			ID          int64 `json:"id"`
+			ViewerCount int   `json:"viewer_count"`
+			// The live category. Kick nests the game under
+			// categories[].name (and a parent category.name); take the
+			// first non-empty so we can gate watch-time on the right game.
+			Categories []struct {
+				Name string `json:"name"`
+				Slug string `json:"slug"`
+			} `json:"categories"`
+			Category *struct {
+				Name string `json:"name"`
+				Slug string `json:"slug"`
+			} `json:"category"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &r); err != nil {
+		return false, "", 0, "", fmt.Errorf("decode channel livestream %s: %w", slug, err)
+	}
+	if r.Data == nil {
+		return false, "", 0, "", nil // offline
+	}
+	cat := ""
+	if len(r.Data.Categories) > 0 {
+		cat = r.Data.Categories[0].Name
+	}
+	if cat == "" && r.Data.Category != nil {
+		cat = r.Data.Category.Name
+	}
+	return true, fmt.Sprintf("%d", r.Data.ID), r.Data.ViewerCount, cat, nil
+}
+
+// channelAndLivestream fetches a channel's numeric id and (if live) its current
+// livestream id from /api/v2/channels/<slug> — both needed by the viewer-WS
+// watch path (channel_handshake uses channelId; user_event uses livestream_id).
+// Returns live=false with an empty livestreamID when the channel is offline.
+func (a *api) channelAndLivestream(ctx context.Context, sess platform.Session, slug string) (channelID, livestreamID int64, live bool, err error) {
+	// Cloudflare on kick.com throws sporadic 403s even at a valid Chrome
+	// fingerprint; a quick retry clears them (the same call succeeds moments
+	// later). Retry transient non-200s a few times before giving up.
+	var body []byte
+	var status int
+	for attempt := 0; attempt < 4; attempt++ {
+		body, status, err = a.d.do(ctx, sess, http.MethodGet, discoveryBase+"/api/v2/channels/"+slug, nil)
+		if err == nil && status == 200 {
+			break
+		}
+		if attempt < 3 {
+			select {
+			case <-ctx.Done():
+				return 0, 0, false, ctx.Err()
+			case <-time.After(time.Duration(attempt+1) * time.Second):
+			}
+		}
+	}
+	if err != nil {
+		return 0, 0, false, err
+	}
+	if status != 200 {
+		return 0, 0, false, fmt.Errorf("channel %s: status %d", slug, status)
+	}
+	var r struct {
+		ID         int64 `json:"id"`
+		Livestream *struct {
+			ID     int64 `json:"id"`
+			IsLive bool  `json:"is_live"`
+		} `json:"livestream"`
+	}
+	if err := json.Unmarshal(body, &r); err != nil {
+		return 0, 0, false, fmt.Errorf("decode channel %s: %w", slug, err)
+	}
+	if r.ID == 0 {
+		return 0, 0, false, fmt.Errorf("channel %s not found", slug)
+	}
+	if r.Livestream == nil || !r.Livestream.IsLive {
+		return r.ID, 0, false, nil
+	}
+	return r.ID, r.Livestream.ID, true, nil
+}
+
+// Progress returns drop progress for the authed account. AUTHED — requires the
+// Authorization: Bearer = full session_token (see transport.cookieHeaderFor).
+//
+// Live-verified shape (2026-06-12): {data:[{ id, name, progress_units,
+// user_app_connected, rewards:[{ id, claimed(bool), progress(0..1 float),
+// required_units, external_id }] }]}. progress is the FRACTION watched toward
+// that reward, so minutes_watched = round(progress * required_units). The
+// reward id matches the campaign benefit id (claimed[]/skip set key).
+func (a *api) Progress(ctx context.Context, sess platform.Session) ([]platform.Progress, error) {
+	body, status, err := a.d.do(ctx, sess, http.MethodGet, dropsBase+"/api/v1/drops/progress", nil)
+	if err != nil {
+		return nil, err
+	}
+	if status != 200 {
+		return nil, fmt.Errorf("drops progress: status %d body %s", status, truncate(body, 200))
+	}
+	camps, err := asList(body, "data", "progress", "drops")
+	if err != nil {
+		return nil, fmt.Errorf("decode progress: %w", err)
+	}
+	var out []platform.Progress
+	for _, camp := range camps {
+		for _, rm := range mlist(camp, "rewards", "benefits", "drops", "tiers") {
+			req := mnum(rm, "required_units", "required_minutes", "requiredMinutes", "minutes")
+			frac := mfloat(rm, "progress", "progress_fraction")
+			minutes := 0
+			if req > 0 && frac > 0 {
+				minutes = int(math.Round(frac * float64(req)))
+			}
+			out = append(out, platform.Progress{
+				BenefitID:      mstr(rm, "id", "reward_id", "rewardId", "benefit_id", "benefitId"),
+				MinutesWatched: minutes,
+				Claimed:        mbool(rm, "claimed", "is_claimed", "isClaimed"),
+			})
+		}
+	}
+	return out, nil
+}
+
+// progressReward is one reward row from /drops/progress with the parent
+// campaign id attached — enough for the completed-claim sweep to know what to
+// POST and whether it is already done.
+type progressReward struct {
+	CampaignID string
+	RewardID   string
+	Name       string
+	Fraction   float64 // 0..1 watched toward this reward
+	Claimed    bool
+}
+
+// progressDetail returns every in-progress reward with its parent campaign id,
+// completion fraction, and claimed flag. Used by SweepCompletedClaims to find
+// rewards that hit 100% and aren't yet granted. AUTHED (bearer).
+func (a *api) progressDetail(ctx context.Context, sess platform.Session) ([]progressReward, error) {
+	body, status, err := a.d.do(ctx, sess, http.MethodGet, dropsBase+"/api/v1/drops/progress", nil)
+	if err != nil {
+		return nil, err
+	}
+	if status != 200 {
+		return nil, fmt.Errorf("drops progress: status %d body %s", status, truncate(body, 200))
+	}
+	camps, err := asList(body, "data", "progress", "drops")
+	if err != nil {
+		return nil, fmt.Errorf("decode progress: %w", err)
+	}
+	var out []progressReward
+	for _, camp := range camps {
+		campID := mstr(camp, "id", "campaign_id", "campaignId")
+		for _, rm := range mlist(camp, "rewards", "benefits", "drops", "tiers") {
+			out = append(out, progressReward{
+				CampaignID: campID,
+				RewardID:   mstr(rm, "id", "reward_id", "rewardId", "benefit_id", "benefitId"),
+				Name:       mstr(rm, "name", "title"),
+				Fraction:   mfloat(rm, "progress", "progress_fraction"),
+				Claimed:    mbool(rm, "claimed", "is_claimed", "isClaimed"),
+			})
+		}
+	}
+	return out, nil
+}
+
+// ---- tolerant JSON helpers -----------------------------------------------
+
+// asList extracts a list of objects from a response that may be a bare array or
+// wrapped under one of the given keys ({data:[]}, {campaigns:[]}, ...).
+func asList(body []byte, keys ...string) ([]map[string]any, error) {
+	var bare []map[string]any
+	if err := json.Unmarshal(body, &bare); err == nil {
+		return bare, nil
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(body, &obj); err != nil {
+		return nil, err
+	}
+	for _, k := range keys {
+		raw, ok := obj[k]
+		if !ok {
+			continue
+		}
+		var list []map[string]any
+		if err := json.Unmarshal(raw, &list); err == nil {
+			return list, nil
+		}
+		// nested one level deeper, e.g. {data:{campaigns:[]}}
+		var inner map[string]json.RawMessage
+		if json.Unmarshal(raw, &inner) == nil {
+			for _, k2 := range keys {
+				if r2, ok := inner[k2]; ok {
+					var l2 []map[string]any
+					if json.Unmarshal(r2, &l2) == nil {
+						return l2, nil
+					}
+				}
+			}
+		}
+	}
+	return nil, nil // no recognizable list — treat as empty, not an error
+}
+
+func mstr(m map[string]any, keys ...string) string {
+	for _, k := range keys {
+		if v, ok := m[k]; ok {
+			switch s := v.(type) {
+			case string:
+				if s != "" {
+					return s
+				}
+			case float64:
+				return fmt.Sprintf("%.0f", s)
+			}
+		}
+	}
+	return ""
+}
+
+func mnum(m map[string]any, keys ...string) int {
+	for _, k := range keys {
+		if v, ok := m[k]; ok {
+			switch n := v.(type) {
+			case float64:
+				return int(n)
+			case string:
+				var i int
+				if _, err := fmt.Sscanf(n, "%d", &i); err == nil {
+					return i
+				}
+			}
+		}
+	}
+	return 0
+}
+
+// mfloat reads a fractional value (e.g. progress 0..1) from the first matching
+// key. Accepts JSON numbers (float64) and numeric strings.
+func mfloat(m map[string]any, keys ...string) float64 {
+	for _, k := range keys {
+		if v, ok := m[k]; ok {
+			switch n := v.(type) {
+			case float64:
+				return n
+			case string:
+				var f float64
+				if _, err := fmt.Sscanf(n, "%g", &f); err == nil {
+					return f
+				}
+			}
+		}
+	}
+	return 0
+}
+
+func mbool(m map[string]any, keys ...string) bool {
+	for _, k := range keys {
+		if v, ok := m[k]; ok {
+			if b, ok := v.(bool); ok {
+				return b
+			}
+		}
+	}
+	return false
+}
+
+// mlist returns a list of sub-objects under the first matching key.
+func mlist(m map[string]any, keys ...string) []map[string]any {
+	for _, k := range keys {
+		if v, ok := m[k]; ok {
+			if arr, ok := v.([]any); ok {
+				out := make([]map[string]any, 0, len(arr))
+				for _, e := range arr {
+					if em, ok := e.(map[string]any); ok {
+						out = append(out, em)
+					}
+				}
+				return out
+			}
+		}
+	}
+	return nil
+}
+
+// gameName handles game as a bare string or a nested object {name|slug}.
+func gameName(m map[string]any) string {
+	if s := mstr(m, "game", "gameName", "category"); s != "" {
+		return s
+	}
+	for _, k := range []string{"game", "category"} {
+		if sub, ok := m[k].(map[string]any); ok {
+			if s := mstr(sub, "name", "slug", "title"); s != "" {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
+// gameSlug extracts the campaign's category slug when the payload carries
+// one: a top-level game_slug/category_slug sibling, or a nested
+// game/category object's slug. Empty when absent — callers fall back to
+// deriving the slug from the display name (gameslug.Slug). Keeping the
+// authoritative slug matters because derived slugs can diverge from Kick's
+// real category paths (renames, punctuation — cf. Twitch issue #61).
+func gameSlug(m map[string]any) string {
+	if s := mstr(m, "game_slug", "gameSlug", "category_slug", "categorySlug"); s != "" {
+		return s
+	}
+	for _, k := range []string{"game", "category"} {
+		if sub, ok := m[k].(map[string]any); ok {
+			if s := mstr(sub, "slug"); s != "" {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
+// gameImage extracts the campaign category's cover image: the nested
+// category/game object's image_url, then its banner or thumbnail. Empty when
+// absent.
+func gameImage(m map[string]any) string {
+	for _, k := range []string{"category", "game"} {
+		if sub, ok := m[k].(map[string]any); ok {
+			if s := mstr(sub, "image_url", "imageUrl", "banner_image_url", "bannerImageUrl", "thumbnail", "thumbnail_url", "banner"); s != "" {
+				return absImageURL(s)
+			}
+		}
+	}
+	return ""
+}
+
+// Claim claims a drop reward. AUTHED. POST {reward_id, campaign_id}.
+func (a *api) Claim(ctx context.Context, sess platform.Session, rewardID, campaignID string) error {
+	payload, _ := json.Marshal(map[string]string{"reward_id": rewardID, "campaign_id": campaignID})
+	body, status, err := a.d.do(ctx, sess, http.MethodPost, dropsBase+"/api/v1/drops/claim", payload)
+	if err != nil {
+		return err
+	}
+	if status != 200 && status != 201 {
+		// A rejection whose body carries a connect_url means "link your
+		// external account first" — not a transient failure. Surface it as
+		// ErrClaimNeedsLink so the sweep stops re-attempting the reward.
+		if cu := connectURLFromBody(body); cu != "" {
+			return &ClaimNeedsLinkError{ConnectURL: cu, Status: status}
+		}
+		return fmt.Errorf("drops claim: status %d body %s", status, truncate(body, 200))
+	}
+	return nil
+}
+
+// connectURLFromBody extracts a connect_url from a claim error body,
+// whether it sits at the top level or under a "data" object. Returns ""
+// when absent.
+func connectURLFromBody(body []byte) string {
+	var m map[string]any
+	if err := json.Unmarshal(body, &m); err != nil {
+		return ""
+	}
+	if cu := mstr(m, "connect_url", "connectUrl"); cu != "" {
+		return cu
+	}
+	if data, ok := m["data"].(map[string]any); ok {
+		return mstr(data, "connect_url", "connectUrl")
+	}
+	return ""
+}
+
+// WatchPing registers a view on a livestream — Kick accrues watch time from
+// these. Call periodically (~60s) while watching. AUTHED.
+func (a *api) WatchPing(ctx context.Context, sess platform.Session, livestreamID string) error {
+	_, status, err := a.d.do(ctx, sess, http.MethodPost, discoveryBase+"/api/v1/video/views/"+livestreamID, nil)
+	if err != nil {
+		return err
+	}
+	if status != 200 && status != 201 && status != 204 {
+		return fmt.Errorf("watch ping %s: status %d", livestreamID, status)
+	}
+	return nil
+}
+
+func truncate(b []byte, n int) string {
+	if len(b) <= n {
+		return string(b)
+	}
+	return string(b[:n]) + "…"
+}

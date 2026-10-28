@@ -1,0 +1,36 @@
+version: 2
+updates:
+  # Go modules — one grouped PR per week for all minor/patch bumps.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      go-deps:
+        patterns: ["*"]
+    # chromedp 0.21 moved to a generic Action API that breaks the browser
+    # sidecar (Kick watch path). Upgrade by hand with a live Kick drop check.
+    ignore:
+      - dependency-name: "github.com/chromedp/*"
+
+  # Docker base images for the miner + browser sidecar.
+  - package-ecosystem: docker
+    directories:
+      - /deploy
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      docker:
+        patterns: ["*"]
+
+  # GitHub Actions versions (keeps actions off deprecated Node runtimes).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      actions:
+        patterns: ["*"]

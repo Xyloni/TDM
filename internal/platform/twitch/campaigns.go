@@ -1,0 +1,537 @@
+package twitch
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/aalejandrofer/grubdrops/internal/platform"
+)
+
+// discovery wraps the low-level client and implements campaign + inventory queries.
+type discovery struct {
+	c  *client
+	mu sync.Mutex
+	// pendingAllowed accumulates per-campaign allow-lists as fetchDetails
+	// runs. Backend drains this via drainAllowed() after listActive returns.
+	pendingAllowed map[string][]string
+	// userID caches the authenticated user's numeric twitch id. The
+	// DropCampaignDetails persisted query resolves its channelLogin
+	// variable as user(id: $channelLogin), despite the name: a login
+	// (or "") makes Twitch answer data.user:null, which leaves every
+	// campaign with zero benefits and nothing to mine. Cached once per
+	// session lifetime.
+	userID string
+	// detailsCache memoises DropCampaignDetails results per campaignID.
+	// A campaign's drops/benefits/allow-list are effectively immutable
+	// for its lifetime, so re-fetching them every discovery + pickCampaign
+	// cycle is the audit's N+1. TTL-bounded so a rare mid-flight change
+	// still gets picked up.
+	detailsCache map[string]cachedDetails
+}
+
+type cachedDetails struct {
+	benefits []platform.DropBenefit
+	allowed  []string
+	at       time.Time
+}
+
+// detailsTTL bounds how long a cached DropCampaignDetails result is
+// reused before a re-fetch. Campaign details rarely change within this
+// window.
+const detailsTTL = 30 * time.Minute
+
+// campaignsData decodes the ViewerDropsDashboard (OpCampaigns) response.
+// DevilXD path: response["data"]["currentUser"]["dropCampaigns"]
+// Source: twitch.py GQL_QUERIES["Campaigns"] + DropsCampaign.__init__
+type campaignsData struct {
+	CurrentUser struct {
+		DropCampaigns []struct {
+			ID     string `json:"id"`
+			Name   string `json:"name"`
+			Status string `json:"status"` // "ACTIVE" | "UPCOMING" | "EXPIRED"
+			// startAt/endAt come as ISO-8601 strings from gql but the
+			// scrape fallback may emit empty strings. Use string +
+			// best-effort parse so empties don't crash unmarshal.
+			StartAtRaw     string `json:"startAt"`
+			EndAtRaw       string `json:"endAt"`
+			AccountLinkURL string `json:"accountLinkURL"`
+			// Kind is a sidecar-only synthetic field ("__kind") added
+			// by buildViewerDropsDashboardEnvelope when scrape detects
+			// REWARD-only campaigns (no watch-time). Real Twitch gql
+			// never sets this. Empty -> treated as "drop".
+			Kind string `json:"__kind"`
+			Self struct {
+				IsAccountConnected bool `json:"isAccountConnected"`
+			} `json:"self"`
+			Game struct {
+				ID          string `json:"id"`
+				DisplayName string `json:"displayName"`
+				BoxArtURL   string `json:"boxArtURL"`
+			} `json:"game"`
+		} `json:"dropCampaigns"`
+	} `json:"currentUser"`
+}
+
+// parseISO is the lenient timestamp parser used by listActive. Returns
+// the zero Time for empty/garbage input — the watcher tolerates it.
+func parseISO(s string) time.Time {
+	if s == "" {
+		return time.Time{}
+	}
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t
+	}
+	if t, err := time.Parse("2006-01-02T15:04:05Z", s); err == nil {
+		return t
+	}
+	return time.Time{}
+}
+
+// campaignDetailsData decodes the DropCampaignDetails (OpDropCampaignDetails) response.
+// DevilXD path: response["data"]["user"]["dropCampaign"]["timeBasedDrops"]
+// Benefit image field is "imageAssetURL" (flat string, NOT a nested image object).
+// Source: inventory.py TimedDrop.__init__ + Benefit.__init__
+//
+// Allow-list path (verified from DevilXD channel.py Channel.from_acl):
+//
+//	response["data"]["user"]["dropCampaign"]["allow"]["isEnabled"] bool
+//	response["data"]["user"]["dropCampaign"]["allow"]["channels"][]["id"]   string
+//	response["data"]["user"]["dropCampaign"]["allow"]["channels"][]["name"] string  ← used as login
+//
+// If isEnabled==false (or allow.channels is empty), all channels streaming the
+// game qualify (no restriction). We conservatively return an empty allow-list
+// in that case — a future revision can fan out to "top channels for game".
+type campaignDetailsData struct {
+	User struct {
+		DropCampaign struct {
+			ID    string `json:"id"`
+			Name  string `json:"name"`
+			Allow struct {
+				IsEnabled bool `json:"isEnabled"`
+				Channels  []struct {
+					ID   string `json:"id"`
+					Name string `json:"name"` // DevilXD reads this as login (Channel.from_acl: login=data["name"])
+				} `json:"channels"`
+			} `json:"allow"`
+			TimeBasedDrops []struct {
+				ID                     string `json:"id"`
+				Name                   string `json:"name"`
+				RequiredMinutesWatched int    `json:"requiredMinutesWatched"`
+				// RequiredSubs > 0 marks a sub-gated tier (e.g. Special
+				// Events "UltraViolet"). Twitch still sends a nonzero
+				// requiredMinutesWatched for these, but watching alone
+				// never earns them (issue #47).
+				RequiredSubs int `json:"requiredSubs"`
+				BenefitEdges []struct {
+					Benefit struct {
+						ID            string `json:"id"`
+						Name          string `json:"name"`
+						ImageAssetURL string `json:"imageAssetURL"` // flat URL, not nested image.url1x
+					} `json:"benefit"`
+				} `json:"benefitEdges"`
+				// preconditionDrops gate this drop behind earlier drops in
+				// a chain (DevilXD TimedDrop preconditions). Usually empty.
+				PreconditionDrops []struct {
+					ID string `json:"id"`
+				} `json:"preconditionDrops"`
+			} `json:"timeBasedDrops"`
+		} `json:"dropCampaign"`
+	} `json:"user"`
+}
+
+// inventoryData decodes the Inventory (OpInventory) response.
+// DevilXD path: response["data"]["currentUser"]["inventory"]["dropCampaignsInProgress"]
+// Progress lives under timeBasedDrops[].self.{currentMinutesWatched, isClaimed, dropInstanceID}.
+// Source: twitch.py GQL_QUERIES["Inventory"] + inventory.py TimedDrop.__init__ self-path
+type inventoryData struct {
+	CurrentUser struct {
+		Inventory struct {
+			DropCampaignsInProgress []struct {
+				ID      string `json:"id"`
+				Name    string `json:"name"`
+				StartAt string `json:"startAt"` // read by TV channel-first discovery only
+				EndAt   string `json:"endAt"`
+				// Status, Self.IsAccountConnected and AccountLinkURL are
+				// read by TV channel-first discovery only (listByChannels).
+				// Inventory is authoritative for in-progress campaigns:
+				// unlike AvailableDrops (which carries no link/self
+				// fields at all), Twitch always populates these here.
+				Status         string `json:"status"` // "ACTIVE" | "EXPIRED" | "UPCOMING"
+				AccountLinkURL string `json:"accountLinkURL"`
+				Self           struct {
+					IsAccountConnected bool `json:"isAccountConnected"`
+				} `json:"self"`
+				Game struct {
+					Name string `json:"name"`
+				} `json:"game"`
+				Allow struct {
+					Channels []struct {
+						Name string `json:"name"`
+					} `json:"channels"`
+				} `json:"allow"`
+				TimeBasedDrops []struct {
+					ID                     string          `json:"id"`
+					Name                   string          `json:"name"`
+					RequiredMinutesWatched int             `json:"requiredMinutesWatched"`
+					RequiredSubs           int             `json:"requiredSubs"`
+					BenefitEdges           []tvBenefitEdge `json:"benefitEdges"`
+					Self                   struct {
+						CurrentMinutesWatched int    `json:"currentMinutesWatched"`
+						IsClaimed             bool   `json:"isClaimed"`
+						DropInstanceID        string `json:"dropInstanceID"`
+					} `json:"self"`
+				} `json:"timeBasedDrops"`
+			} `json:"dropCampaignsInProgress"`
+			// gameEventDrops lists benefits the account already OWNS
+			// (earned/claimed, possibly in a prior season). id is the
+			// benefit id (= benefitEdges[].benefit.id), per DevilXD
+			// inventory.py — NOT the drop id. Used to skip drops whose
+			// reward we already hold.
+			GameEventDrops []struct {
+				ID string `json:"id"`
+			} `json:"gameEventDrops"`
+		} `json:"inventory"`
+	} `json:"currentUser"`
+}
+
+// listActive returns ALL campaigns the user can see — ACTIVE, EXPIRED, and
+// UPCOMING — with their drop benefits (benefits are only fetched for ACTIVE
+// campaigns to save bandwidth; EXPIRED / UPCOMING are emitted with empty
+// benefit lists so the /drops page can show past + upcoming tabs filtered
+// by the whitelist). The Status field is lower-cased — "active", "expired",
+// or "upcoming" — matching the values persisted in the campaigns table.
+// The whitelist is ALWAYS applied: non-whitelisted campaigns are dropped
+// regardless of status.
+//
+// As a side effect listActive calls captureAllowed for ACTIVE campaigns so
+// that the caller (Backend) can drain the allow-lists via drainAllowed()
+// and store them in its own cache. The function name is kept for backward
+// compatibility with the watcher/mining flow; mining-side callers must
+// filter Status == "active" before attempting to mine.
+func (d *discovery) listActive(ctx context.Context, sess platform.Session) ([]platform.Campaign, error) {
+	var page campaignsData
+	// fetchRewardCampaigns: false matches DevilXD/TwitchDropsMiner's
+	// invocation of the ViewerDropsDashboard persisted query. Passing
+	// nil variables works too but may take a different server-side
+	// branch; matching DevilXD exactly removes one unknown.
+	vars := map[string]any{"fetchRewardCampaigns": false}
+	if err := d.c.gql(ctx, sess.AccessToken, OpCampaigns, vars, &page); err != nil {
+		return nil, fmt.Errorf("list campaigns: %w", err)
+	}
+	// Resolve + cache the authenticated user's id. fetchDetails passes
+	// it as channelLogin: anything else makes Twitch's resolver return
+	// data.user:null, which strips TimeBasedDrops and leaves real
+	// campaigns with Benefits=[]. The session carries the id when the
+	// login flow learned it; otherwise one CurrentUser call per session
+	// lifetime.
+	if d.userID == "" {
+		if sess.UserID != "" {
+			d.userID = sess.UserID
+		} else if id, err := d.resolveCurrentUserID(ctx, sess); err == nil {
+			d.userID = id
+		} else {
+			slog.Warn("twitch: resolve user id for campaign details failed",
+				"account", sess.AccountID, "err", err)
+		}
+	}
+	out := make([]platform.Campaign, 0, len(page.CurrentUser.DropCampaigns))
+	for _, c := range page.CurrentUser.DropCampaigns {
+		// GameFilter is now a "should-fetch-details" gate, not a
+		// drop-the-campaign gate. Non-whitelisted campaigns are still
+		// emitted (status + game + name) so the /drops Discoverable
+		// tab can surface them — but we skip the per-campaign detail
+		// + allow-list fetches to keep bandwidth bounded by whitelist
+		// size. The watcher applies the whitelist again before mining,
+		// so emitting a non-whitelisted campaign here is safe.
+		shouldFetchDetails := sess.GameFilter == nil || sess.GameFilter(c.Game.DisplayName)
+		// Skip scrape-fallback noise: campaigns with no game name AND
+		// dom-prefixed IDs are paragraphs the heading-anchored walk
+		// grabbed instead of real cards. Don't poison the discovery
+		// cache with them.
+		if c.Game.DisplayName == "" && strings.HasPrefix(c.ID, "dom-") {
+			continue
+		}
+		kind := c.Kind
+		if kind == "" {
+			kind = "drop"
+		}
+		// Real gql calls return self.isAccountConnected; scrape-only
+		// entries (id contains "|" or " ") have it set optimistically.
+		linkChecked := !strings.ContainsAny(c.ID, "| ")
+		camp := platform.Campaign{
+			ID:                 c.ID,
+			Platform:           "twitch",
+			Game:               c.Game.DisplayName,
+			GameID:             c.Game.ID,
+			BoxArtURL:          BoxArtURL(c.Game.BoxArtURL, c.Game.ID),
+			Name:               c.Name,
+			StartsAt:           parseISO(c.StartAtRaw),
+			EndsAt:             parseISO(c.EndAtRaw),
+			AccountLinked:      c.Self.IsAccountConnected,
+			AccountLinkChecked: linkChecked,
+			AccountLinkURL:     c.AccountLinkURL,
+			Kind:               kind,
+		}
+		switch c.Status {
+		case "ACTIVE":
+			camp.Status = "active"
+			// Non-whitelisted: emit shell row only (no detail fetch,
+			// no synth benefit). The /drops Discoverable tab uses this
+			// to advertise opt-in candidates. Watcher won't mine it
+			// because Benefits is empty.
+			if !shouldFetchDetails {
+				break
+			}
+			// Skip detail fetch for scrape-synthesised IDs — those
+			// aren't real Twitch UUIDs and OpDropCampaignDetails will
+			// fail. Synth a single default benefit per scrape-only
+			// campaign so the watcher's pickCampaign loop advances
+			// (it skips campaigns with len(Benefits)==0). Twitch
+			// credits minutes against the enrolled real drop in the
+			// user's account; our benefit row is a local placeholder
+			// for state tracking.
+			if strings.ContainsAny(c.ID, "| ") {
+				// e.g. "Minecraft|Builder Cape..." — scraped
+				if kind != "reward" {
+					camp.Benefits = []platform.DropBenefit{{
+						ID:              c.ID + "_default",
+						CampaignID:      c.ID,
+						Name:            c.Name,
+						RequiredMinutes: 5,
+					}}
+				}
+			} else {
+				benefits, allowedLogins, err := d.fetchDetails(ctx, sess, c.ID)
+				if err != nil {
+					return nil, err
+				}
+				d.captureAllowed(c.ID, allowedLogins)
+				camp.Benefits = benefits
+				camp.AllowedChannels = allowedLogins
+				camp.AllowedChannelCount = len(allowedLogins)
+			}
+		case "UPCOMING":
+			camp.Status = "upcoming"
+		case "EXPIRED":
+			camp.Status = "expired"
+		default:
+			// Unknown status — record it lower-cased and continue.
+			camp.Status = strings.ToLower(c.Status)
+		}
+		out = append(out, camp)
+	}
+	return dedupeSynthVsReal(out), nil
+}
+
+// dedupeSynthVsReal drops scrape-synthesised campaign entries (IDs that
+// contain "|" or " " — fabricated by the sidecar's scrape-fallback merge)
+// when a real gql-sourced entry exists for the same game. Real UUID
+// campaigns are authoritative: they have valid drop UUIDs that the
+// inventory query can match, allowing the watcher to track progress and
+// claim. Synth entries have fabricated IDs that never appear in
+// dropCampaignsInProgress, so picking them strands the watcher at 0/N
+// minutes forever (B2).
+//
+// When NO real entry exists for a game (e.g. integrity-wall blocked gql
+// and only scrape data survived), synth entries are kept so the
+// dashboard can still surface them — but the watcher's pick loop will
+// still skip them via the AccountLinked=false / ID-shape heuristics.
+func dedupeSynthVsReal(camps []platform.Campaign) []platform.Campaign {
+	realGames := map[string]bool{}
+	for _, c := range camps {
+		if c.Platform != "twitch" {
+			continue
+		}
+		if !strings.ContainsAny(c.ID, "| ") {
+			realGames[c.Game] = true
+		}
+	}
+	out := make([]platform.Campaign, 0, len(camps))
+	for _, c := range camps {
+		if c.Platform == "twitch" && strings.ContainsAny(c.ID, "| ") && realGames[c.Game] {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// fetchDetails calls OpDropCampaignDetails and converts the response into
+// a slice of platform.DropBenefit values and the per-campaign allow-list.
+//
+// Note on BenefitID: claims are issued against the drop's id (TimedDrop.id),
+// not the underlying reward benefit id — matching DevilXD's claim flow.
+//
+// allowedLogins is nil when allow.isEnabled==false (meaning any channel
+// streaming the game qualifies). A future revision should fan out to the
+// "top channels for game" query in that case. For now we conservatively
+// return nil, which causes ListEligibleChannels to return no streams.
+func (d *discovery) fetchDetails(ctx context.Context, sess platform.Session, campaignID string) (benefits []platform.DropBenefit, allowedLogins []string, err error) {
+	// Serve from the per-campaign TTL cache when fresh — avoids the N+1
+	// DropCampaignDetails fan-out on every discovery/pickCampaign cycle.
+	d.mu.Lock()
+	if cd, ok := d.detailsCache[campaignID]; ok && time.Since(cd.at) < detailsTTL {
+		d.mu.Unlock()
+		return cd.benefits, cd.allowed, nil
+	}
+	d.mu.Unlock()
+
+	var det campaignDetailsData
+	// channelLogin is resolved as user(id:), so it must be the
+	// authenticated user's numeric id (see discovery.userID).
+	if err := d.c.gql(ctx, sess.AccessToken, OpDropCampaignDetails,
+		map[string]any{"dropID": campaignID, "channelLogin": d.userID}, &det); err != nil {
+		return nil, nil, fmt.Errorf("campaign details %s: %w", campaignID, err)
+	}
+	// A null user or campaign is not a real "no drops" answer: say so,
+	// and keep it out of the cache so the next scan retries.
+	empty := det.User.DropCampaign.ID == "" && len(det.User.DropCampaign.TimeBasedDrops) == 0
+	if empty {
+		slog.Warn("twitch: campaign details came back empty",
+			"account", sess.AccountID, "campaign", campaignID)
+	}
+	benefits = make([]platform.DropBenefit, 0, len(det.User.DropCampaign.TimeBasedDrops))
+	for _, td := range det.User.DropCampaign.TimeBasedDrops {
+		var preconds []string
+		for _, pc := range td.PreconditionDrops {
+			if pc.ID != "" {
+				preconds = append(preconds, pc.ID)
+			}
+		}
+		// Sub-gated drops can't be earned by watching, whatever minutes
+		// Twitch lists. Report them as 0 minutes, the app-wide "not
+		// watch-earnable" marker: the watcher never picks them and
+		// /drops shows them as action-required (issue #47).
+		reqMin := td.RequiredMinutesWatched
+		if td.RequiredSubs > 0 {
+			reqMin = 0
+		}
+		for _, be := range td.BenefitEdges {
+			benefits = append(benefits, platform.DropBenefit{
+				ID:              td.ID, // drop id used for claiming, not benefit reward id
+				CampaignID:      campaignID,
+				Name:            be.Benefit.Name,
+				RequiredMinutes: reqMin,
+				ImageURL:        be.Benefit.ImageAssetURL,
+				RewardID:        be.Benefit.ID, // benefit id — matches gameEventDrops
+				Preconditions:   preconds,
+			})
+		}
+	}
+	if det.User.DropCampaign.Allow.IsEnabled {
+		for _, ch := range det.User.DropCampaign.Allow.Channels {
+			allowedLogins = append(allowedLogins, ch.Name)
+		}
+	}
+	if empty {
+		return benefits, allowedLogins, nil
+	}
+	d.mu.Lock()
+	if d.detailsCache == nil {
+		d.detailsCache = map[string]cachedDetails{}
+	}
+	d.detailsCache[campaignID] = cachedDetails{benefits: benefits, allowed: allowedLogins, at: time.Now()}
+	d.mu.Unlock()
+	return benefits, allowedLogins, nil
+}
+
+// resolveCurrentUserID fetches the authenticated user's numeric twitch
+// id via a single CurrentUser ad-hoc gql query. Only used to populate
+// the channelLogin arg of DropCampaignDetails, which Twitch resolves
+// as user(id:).
+func (d *discovery) resolveCurrentUserID(ctx context.Context, sess platform.Session) (string, error) {
+	const q = `query CurrentUser { currentUser { id } }`
+	var resp struct {
+		CurrentUser struct {
+			ID string `json:"id"`
+		} `json:"currentUser"`
+	}
+	if err := d.c.gqlQuery(ctx, sess.AccessToken, "CurrentUser", q, nil, &resp); err != nil {
+		return "", err
+	}
+	if resp.CurrentUser.ID == "" {
+		return "", fmt.Errorf("currentUser.id empty")
+	}
+	return resp.CurrentUser.ID, nil
+}
+
+// captureAllowed stores per-campaign allow-lists as a side-effect of
+// fetchDetails so Backend can drain them after listActive completes.
+func (d *discovery) captureAllowed(campaignID string, logins []string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.pendingAllowed == nil {
+		d.pendingAllowed = map[string][]string{}
+	}
+	d.pendingAllowed[campaignID] = logins
+}
+
+// drainAllowed returns and clears the pending allow-list map. Safe for
+// concurrent use; intended to be called exactly once per listActive call.
+func (d *discovery) drainAllowed() map[string][]string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	out := d.pendingAllowed
+	d.pendingAllowed = map[string][]string{}
+	return out
+}
+
+// inventory returns the current watch progress for all in-progress drop campaigns.
+func (d *discovery) inventory(ctx context.Context, sess platform.Session) ([]platform.Progress, error) {
+	var inv inventoryData
+	if err := d.c.gql(ctx, sess.AccessToken, OpInventory, nil, &inv); err != nil {
+		return nil, fmt.Errorf("inventory: %w", err)
+	}
+	out := []platform.Progress{}
+	for _, camp := range inv.CurrentUser.Inventory.DropCampaignsInProgress {
+		for _, td := range camp.TimeBasedDrops {
+			out = append(out, platform.Progress{
+				BenefitID:      td.ID,
+				MinutesWatched: td.Self.CurrentMinutesWatched,
+				Claimed:        td.Self.IsClaimed,
+				InstanceID:     td.Self.DropInstanceID,
+			})
+		}
+	}
+	// NOTE: we deliberately do NOT emit gameEventDrops (owned-reward)
+	// markers. Twitch reuses the same reward item across campaigns/seasons,
+	// so "account owns this item" does not mean "this campaign's drop is
+	// claimed" — emitting it made the watcher skip + falsely mark every new
+	// campaign granting an already-owned item (#24 follow-up). Per-drop
+	// IsClaimed from dropCampaignsInProgress above is the only claim truth.
+	return out, nil
+}
+
+// readyDrops returns inventory drops that are fully watched and unclaimed
+// with an instance id, whatever their game, each with its campaign's name,
+// game and link state.
+func (d *discovery) readyDrops(ctx context.Context, sess platform.Session) ([]platform.ReadyDrop, error) {
+	var inv inventoryData
+	if err := d.c.gql(ctx, sess.AccessToken, OpInventory, nil, &inv); err != nil {
+		return nil, fmt.Errorf("inventory: %w", err)
+	}
+	out := []platform.ReadyDrop{}
+	for _, camp := range inv.CurrentUser.Inventory.DropCampaignsInProgress {
+		c := platform.Campaign{
+			ID: camp.ID, Platform: "twitch", Name: camp.Name, Game: camp.Game.Name,
+			AccountLinked: camp.Self.IsAccountConnected, AccountLinkChecked: true, AccountLinkURL: camp.AccountLinkURL,
+		}
+		for _, td := range camp.TimeBasedDrops {
+			if td.Self.IsClaimed || td.Self.DropInstanceID == "" || td.Self.CurrentMinutesWatched < td.RequiredMinutesWatched {
+				continue
+			}
+			out = append(out, platform.ReadyDrop{Campaign: c, Benefit: platform.DropBenefit{
+				ID:              td.ID,
+				CampaignID:      camp.ID,
+				Name:            td.Name,
+				RequiredMinutes: td.RequiredMinutesWatched,
+				InstanceID:      td.Self.DropInstanceID,
+			}})
+		}
+	}
+	return out, nil
+}

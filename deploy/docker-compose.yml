@@ -1,0 +1,68 @@
+services:
+  miner:
+    image: ghcr.io/aalejandrofer/grubdrops:latest
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.miner
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      # Optional. Unset, the miner creates /data/master.key on first start and
+      # reuses it. Set it to keep the key outside the data folder; it must be an
+      # age X25519 identity (AGE-SECRET-KEY-1...) from:
+      #   docker run --rm ghcr.io/aalejandrofer/grubdrops:latest keygen
+      GRUB_MASTER_KEY: ${GRUB_MASTER_KEY:-}
+      GRUB_DB_PATH: /data/miner.db
+      GRUB_HTTP_ADDR: 0.0.0.0:8080
+      # Timezone: sets the server-side clock for log timestamps and
+      # "Claims Today" midnight reset. Uses Go's IANA database.
+      # Examples: Asia/Shanghai, America/New_York, Europe/London
+      TZ: ${TZ:-UTC}
+      # Legacy fixed sidecar address. Leave empty — for Kick the miner
+      # auto-creates a Chrome sidecar per account on demand over the mounted
+      # docker socket (no sidecar service to define). Set only to pin a
+      # pre-existing always-on sidecar.
+      GRUB_BROWSER_URL: ${GRUB_BROWSER_URL:-}
+      # Kick sidecar config
+      GRUB_KICK_SIDECAR_TEMPLATE: ${GRUB_KICK_SIDECAR_TEMPLATE:-grubdrops-browser-{slug}}
+      GRUB_KICK_SIDECAR_PORT: ${GRUB_KICK_SIDECAR_PORT:-9090}
+      # Secure cookies: ON behind Traefik/HTTPS. Turn off only for plain-HTTP localhost.
+      GRUB_SECURE_COOKIES: ${GRUB_SECURE_COOKIES:-1}
+      # OIDC SSO (optional). All four mandatory vars must be set for SSO to turn on.
+      GRUB_OIDC_ISSUER: ${GRUB_OIDC_ISSUER:-}
+      GRUB_OIDC_CLIENT_ID: ${GRUB_OIDC_CLIENT_ID:-}
+      GRUB_OIDC_CLIENT_SECRET: ${GRUB_OIDC_CLIENT_SECRET:-}
+      GRUB_OIDC_REDIRECT_URL: ${GRUB_OIDC_REDIRECT_URL:-}
+      GRUB_OIDC_PROVIDER_NAME: ${GRUB_OIDC_PROVIDER_NAME:-authentik}
+      GRUB_OIDC_ALLOWED_EMAILS: ${GRUB_OIDC_ALLOWED_EMAILS:-}
+      GRUB_OIDC_ALLOWED_GROUPS: ${GRUB_OIDC_ALLOWED_GROUPS:-}
+    volumes:
+      # The miner runs as distroless nonroot (UID 65532). A host-owned bind
+      # mount leaves SQLite unable to write miner.db. Make it writable first:
+      #   mkdir -p data && sudo chown 65532:65532 data
+      # Or use a named volume (Docker creates it already writable).
+      - ./data:/data
+      # Kick: the miner auto-creates a Chrome sidecar per account over the
+      # docker socket. Mount it for Kick. Omit it for a Twitch-only setup.
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  # No sidecar service to define — the miner pulls + runs the
+  # ghcr.io/aalejandrofer/grubdrops-browser image per Kick account on demand
+  # (see GRUB_KICK_SIDECAR_* above). Build that image with
+  # `docker build -f deploy/Dockerfile.browser .`.
+
+  # Optional auto-update. Watchtower polls ghcr and, when a new GrubDrops image
+  # is published, pulls it and recreates ONLY the miner container (the trailing
+  # `grubdrops` arg scopes it — it never touches your other containers). The
+  # in-app update checker just notifies; this is the piece that actually applies
+  # the update unattended. Uncomment to enable (needs the Docker socket):
+  #
+  # watchtower:
+  #   image: containrrr/watchtower:latest
+  #   restart: unless-stopped
+  #   volumes:
+  #     - /var/run/docker.sock:/var/run/docker.sock
+  #   command: --interval 21600 --cleanup grubdrops
+  #   # --interval 21600 = poll every 6h; --cleanup removes the old image after update.
+  #   # The trailing `grubdrops` limits Watchtower to the miner container only.

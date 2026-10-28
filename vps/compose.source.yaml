@@ -1,0 +1,7 @@
+services:
+  miner:
+    image: grubdrops-vps:local
+    pull_policy: build
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.miner

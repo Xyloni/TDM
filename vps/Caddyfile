@@ -1,0 +1,4 @@
+{$GRUB_DOMAIN} {
+    encode zstd gzip
+    reverse_proxy miner:8080
+}

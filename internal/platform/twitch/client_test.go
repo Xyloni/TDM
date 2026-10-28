@@ -1,0 +1,255 @@
+package twitch
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestClient_GQLSendsClientIDAndHash(t *testing.T) {
+	var got struct {
+		clientID string
+		body     []byte
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got.clientID = r.Header.Get("Client-Id")
+		got.body, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"ok":true}}`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	var out struct {
+		Ok bool `json:"ok"`
+	}
+	require.NoError(t, c.gql(context.Background(), "", OpInventory, nil, &out))
+
+	assert.Equal(t, clientID, got.clientID)
+	assert.Contains(t, string(got.body), `"operationName":"Inventory"`)
+	assert.Contains(t, string(got.body), `"sha256Hash":"`+OpInventory.Hash+`"`)
+	assert.True(t, out.Ok)
+}
+
+func TestClient_GQLReturnsErrorOnGQLError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"errors":[{"message":"PersistedQueryNotFound"}]}`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	var out json.RawMessage
+	err := c.gql(context.Background(), "", OpInventory, nil, &out)
+	require.Error(t, err)
+	assert.True(t, strings.Contains(err.Error(), "PersistedQueryNotFound"))
+}
+
+func TestClient_InventoryRejectsPartialProgress(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"currentUser":{"dropCampaigns":[]}},"errors":[{"message":"service error"}]}`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	var out json.RawMessage
+	err := c.gql(context.Background(), "tok", OpInventory, nil, &out)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "partial response")
+}
+
+func TestClient_NonInventoryAcceptsPartialData(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"ok":true},"errors":[{"message":"service timeout"}]}`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	var out struct {
+		Ok bool `json:"ok"`
+	}
+	require.NoError(t, c.gqlQuery(context.Background(), "tok", "OtherOperation", "query OtherOperation { ok }", nil, &out))
+	assert.True(t, out.Ok)
+}
+
+func TestClient_GQLSendsBearerWhenTokenProvided(t *testing.T) {
+	var gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		_, _ = w.Write([]byte(`{"data":{}}`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	var out json.RawMessage
+	require.NoError(t, c.gql(context.Background(), "abc123", OpInventory, nil, &out))
+	assert.Equal(t, "OAuth abc123", gotAuth)
+}
+
+func TestClient_GQLQueryNonPersisted(t *testing.T) {
+	var got struct {
+		body []byte
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got.body, _ = io.ReadAll(r.Body)
+		_, _ = w.Write([]byte(`{"data":{"ok":true}}`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	var out struct {
+		Ok bool `json:"ok"`
+	}
+	require.NoError(t, c.gqlQuery(context.Background(), "tok", "FooOp", "mutation FooOp { foo }", map[string]any{"x": 1}, &out))
+	body := string(got.body)
+	assert.Contains(t, body, `"operationName":"FooOp"`)
+	assert.Contains(t, body, `"query":"mutation FooOp { foo }"`)
+	assert.Contains(t, body, `"x":1`)
+}
+
+// TestClient_ResolveSpadeURL_Inline verifies resolveSpadeURL extracts
+// the beacon URL when Twitch inlines "spade_url" directly in the channel
+// page HTML.
+func TestClient_ResolveSpadeURL_Inline(t *testing.T) {
+	const wantURL = "https://video-edge-abc.spade.twitch.tv/spade"
+	mux := http.NewServeMux()
+	mux.HandleFunc("/somechannel", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `<html>"spade_url": "`+wantURL+`"</html>`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	c.homeURL = srv.URL
+	got, err := c.resolveSpadeURL(context.Background(), "tok", "somechannel")
+	require.NoError(t, err)
+	assert.Equal(t, wantURL, got)
+}
+
+// TestClient_ResolveSpadeURL_SettingsFallback verifies the two-step
+// path: when the channel page only carries a settings.<hex>.js bundle
+// URL (no inline spade_url), resolveSpadeURL fetches that bundle and
+// extracts the beacon URL from it.
+func TestClient_ResolveSpadeURL_SettingsFallback(t *testing.T) {
+	const wantURL = "https://video-edge-xyz.spade.twitch.tv/spade"
+	var srv *httptest.Server
+	srvBase := func() string { return srv.URL }
+	mux := http.NewServeMux()
+	mux.HandleFunc("/fallbackchannel", func(w http.ResponseWriter, r *http.Request) {
+		// No inline spade_url — only a settings bundle reference.
+		_, _ = io.WriteString(w, `<html><script src="`+srvBase()+`/config/settings.1234567890abcdef1234567890abcdef.js"></script></html>`)
+	})
+	mux.HandleFunc("/config/settings.1234567890abcdef1234567890abcdef.js", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `window.settings = {"beacon_url": "`+wantURL+`"};`)
+	})
+	srv = httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	c.homeURL = srv.URL
+	got, err := c.resolveSpadeURL(context.Background(), "tok", "fallbackchannel")
+	require.NoError(t, err)
+	assert.Equal(t, wantURL, got)
+}
+
+// TestClient_ResolveSpadeURL_NotFound verifies resolveSpadeURL errors
+// when neither the page nor a settings bundle carries a beacon URL.
+func TestClient_ResolveSpadeURL_NotFound(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/deadchannel", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `<html>no analytics here</html>`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	c.homeURL = srv.URL
+	_, err := c.resolveSpadeURL(context.Background(), "tok", "deadchannel")
+	require.Error(t, err)
+}
+
+// TestClient_ResolveSpadeURL_RejectsOffDomainHost is the security guard for
+// the beacon host-pin: a channel page (attacker-influenceable content) that
+// inlines a spade_url pointing off twitch.tv must NOT be followed, because
+// sendSpadeBeacon would POST the user's OAuth token to that host.
+func TestClient_ResolveSpadeURL_RejectsOffDomainHost(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/evilchannel", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `<html>"spade_url": "https://evil.example.com/spade"</html>`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	c.homeURL = srv.URL
+	_, err := c.resolveSpadeURL(context.Background(), "tok", "evilchannel")
+	require.Error(t, err, "off-domain spade_url must be rejected, not followed with the OAuth token")
+	assert.Contains(t, err.Error(), "twitch.tv")
+}
+
+// TestClient_ResolveSpadeURL_RejectsOffDomainSettingsHost guards the
+// settings.js fallback: an off-domain settings bundle URL must not be
+// fetched (fetchText also carries the OAuth token).
+func TestClient_ResolveSpadeURL_RejectsOffDomainSettingsHost(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/evilchannel2", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `<html><script src="https://evil.example.com/config/settings.1234567890abcdef1234567890abcdef.js"></script></html>`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	c.homeURL = srv.URL
+	_, err := c.resolveSpadeURL(context.Background(), "tok", "evilchannel2")
+	require.Error(t, err, "off-domain settings.js host must be rejected")
+}
+
+// TestClient_HostAllowedForBeacon pins the allow rule: twitch.tv subdomains
+// pass, arbitrary hosts fail, and the homeURL host (test server) passes.
+func TestClient_HostAllowedForBeacon(t *testing.T) {
+	c := newTestClient("http://127.0.0.1:9999")
+	c.homeURL = "http://127.0.0.1:9999"
+	assert.True(t, c.hostAllowedForBeacon("https://video-edge-abc.spade.twitch.tv/spade"))
+	assert.True(t, c.hostAllowedForBeacon("https://assets.twitch.tv/config/settings.x.js"))
+	assert.True(t, c.hostAllowedForBeacon("https://twitch.tv/spade"))
+	assert.True(t, c.hostAllowedForBeacon("http://127.0.0.1:9999/spade"), "homeURL host (test) allowed")
+	assert.False(t, c.hostAllowedForBeacon("https://evil.example.com/spade"))
+	assert.False(t, c.hostAllowedForBeacon("https://nottwitch.tv.evil.com/spade"))
+	assert.False(t, c.hostAllowedForBeacon("https://faketwitch.tv/spade"))
+}
+
+func TestIntegrity_LogsNoToken(t *testing.T) {
+	const secret = "SECRET-TOKEN-123"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		exp := time.Now().Add(24 * time.Hour).UnixMilli()
+		_, _ = w.Write([]byte(`{"token":"` + secret + `","expiration":` + strconv.FormatInt(exp, 10) + `,"is_bad_bot":false}`))
+	}))
+	defer srv.Close()
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	c := newTestClient(srv.URL)
+	c.integrityURL = srv.URL
+	tok, err := c.integrity(context.Background(), "")
+	require.NoError(t, err)
+	require.Equal(t, secret, tok)
+
+	logged := buf.String()
+	require.Contains(t, logged, "twitch integrity token acquired", "log line must be emitted")
+	assert.NotContains(t, logged, "SECRET", "integrity token must not reach logs")
+	assert.NotContains(t, logged, `"raw"`, "raw response body must not reach logs")
+}

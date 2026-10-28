@@ -1,0 +1,15 @@
+services:
+  miner:
+    image: grubdrops-vps:local
+    pull_policy: build
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.miner
+    ports:
+      - "127.0.0.1:${GRUB_HTTP_PORT:-8080}:8080"
+    environment:
+      GRUB_SECURE_COOKIES: "0"
+
+  # A local source image is not the published GHCR image, so don't poll it.
+  watchtower:
+    profiles: ["disabled-in-local-mode"]
