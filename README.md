@@ -1,24 +1,138 @@
 # GrubDrops
 
-Самостоятельно размещаемый майнер Twitch Drops и Kick Drops с веб-интерфейсом, SQLite и параллельной поддержкой нескольких аккаунтов.
+[English](#english) · [Русский](#русский)
 
-> **О проекте.** Это персональный форк [оригинального GrubDrops от aalejandrofer](https://github.com/aalejandrofer/GrubDrops). Здесь сохраняется основа оригинального проекта и добавляются изменения для этого форка. Благодарность автору оригинала и участникам проектов, на которых он основан.
+## English
 
-## Возможности
+A self-hosted Twitch Drops and Kick Drops miner with a web interface, SQLite storage, and support for multiple accounts.
 
-- Одновременный фарм Twitch и Kick на нескольких аккаунтах.
+> **About this repository:** This is a personal fork based on [aalejandrofer/GrubDrops](https://github.com/aalejandrofer/GrubDrops). It keeps the original project's foundation and adds changes for this fork. Thanks to the original author and the projects that informed it.
+
+### Features
+
+- Mine Twitch and Kick drops with multiple accounts in parallel.
+- Discover active campaigns, queue rewards, and move to the next reward automatically.
+- Import Twitch Android TV accounts from `account.txt`.
+- Mine account groups from `account.txt` sequentially.
+- Retry incomplete Twitch Inventory responses so a temporary API error does not make an account switch to the wrong reward.
+- Send notifications through Discord and Telegram; optionally use OIDC sign-in.
+- Run on Windows or deploy to a VPS with Docker Compose.
+
+### Quick start on a VPS
+
+The fork's Docker image is `ghcr.io/xyloni/grubdrops:latest`. GitHub Actions publishes it after the repository checks pass.
+
+For a simple HTTP deployment, create `compose.yml` on the server:
+
+```yaml
+services:
+  miner:
+    image: ghcr.io/xyloni/grubdrops:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      GRUB_SECURE_COOKIES: "0"
+      TZ: Europe/Moscow
+    volumes:
+      - ./data:/data
+```
+
+Then start it:
+
+```sh
+mkdir -p data
+docker compose up -d
+```
+
+Open `http://SERVER_IP:8080` and create the administrator password. This simple setup uses unencrypted HTTP. For permanent public access, configure HTTPS or restrict the port and connect through an SSH tunnel.
+
+#### HTTPS deployment
+
+The [`vps/`](vps/) directory contains a Compose setup with Caddy, automatic HTTPS, and Watchtower:
+
+1. Copy the `vps` directory to the server and enter it.
+2. Copy `.env.example` to `.env`. Set `GRUB_IMAGE=ghcr.io/xyloni/grubdrops:latest`, your `GRUB_DOMAIN`, and your time zone.
+3. Point the domain's DNS record to the VPS and allow inbound ports 80 and 443.
+4. Start the services:
+
+   ```sh
+   mkdir -p data
+   sudo chown -R 65532:65532 data
+   docker compose -f compose.yaml -f compose.https.yaml up -d
+   ```
+
+Open `https://your-domain`. Watchtower checks for image updates every six hours. To apply an already-published update immediately, run `sh update.sh` from the `vps` directory. If Kick is enabled, run `GRUB_VPS_KICK=1 sh update.sh`.
+
+If the GHCR package is private, make it public in GitHub Packages settings or configure Docker authentication on the VPS.
+
+### Accounts and groups
+
+Add accounts in **Settings → Accounts** or in the first-run wizard.
+
+Twitch Android TV records in `account.txt` use this format:
+
+```text
+email:login:password:oauth_token:user_ID:device_ID
+```
+
+Put one full record or one OAuth token on each line. To assign groups, put a header such as `1:` on its own line; the accounts below it belong to that group until the next header. Groups mine a campaign one after another. The file contains account credentials: never publish it or add it to the repository.
+
+Twitch Android and TV-code sign-in are also available. Kick accounts can be imported from cookies in Netscape format.
+
+### Data and security
+
+- The database is stored in `data/miner.db`; the session encryption key is stored in `data/master.key`. Keep them together when backing up or moving the installation.
+- Do not delete `master.key`: saved account sessions cannot be decrypted without it.
+- Git ignores local `data/` and `data-test/` directories, database files, keys, `.env`, and `account*.txt` files.
+- The container runs as UID `65532`; that user needs write access to `data`.
+- The Docker socket is only needed for Kick sidecars. Twitch-only deployments do not need to mount it.
+
+### Updates and development
+
+Changes pushed to `main` or `master` run through GitHub Actions. After CI succeeds, the workflow publishes `ghcr.io/xyloni/grubdrops:latest`. Watchtower updates the VPS deployment automatically. For the simple Compose setup, update manually:
+
+```sh
+docker compose pull
+docker compose up -d
+```
+
+To build from source:
+
+```sh
+npm --prefix web ci
+npm --prefix web run build
+go build ./...
+go test ./...
+```
+
+On Windows, run `run-miner.bat`; Go must be installed.
+
+### License and upstream project
+
+This fork is distributed under the [MIT License](LICENSE). The original project and its history are available at [aalejandrofer/GrubDrops](https://github.com/aalejandrofer/GrubDrops).
+
+## Русский
+
+Самостоятельно размещаемый майнер Twitch Drops и Kick Drops с веб-интерфейсом, хранением данных в SQLite и поддержкой нескольких аккаунтов.
+
+> **Об этом репозитории:** Это персональный форк, основанный на [aalejandrofer/GrubDrops](https://github.com/aalejandrofer/GrubDrops). Здесь сохраняется основа оригинального проекта и добавляются изменения для этого форка. Спасибо автору оригинала и проектам, на которых он основан.
+
+### Возможности
+
+- Параллельный фарм Twitch и Kick на нескольких аккаунтах.
 - Поиск активных кампаний, очередь наград и автоматический переход к следующей награде.
-- Импорт Twitch Android TV аккаунтов из `account.txt`.
+- Импорт аккаунтов Twitch Android TV из `account.txt`.
 - Последовательный фарм групп аккаунтов из `account.txt`.
-- Повторный запрос Inventory при неполных ответах Twitch, чтобы временная ошибка не переключала аккаунт на неправильную награду.
+- Повторный запрос неполного Inventory Twitch, чтобы временная ошибка API не переключала аккаунт на неправильную награду.
 - Уведомления через Discord и Telegram, а также вход через OIDC.
-- Запуск на Windows или развёртывание через Docker Compose на VPS.
+- Запуск на Windows и развёртывание на VPS через Docker Compose.
 
-## Быстрый запуск на VPS
+### Быстрый запуск на VPS
 
-Для персонального образа используется `ghcr.io/xyloni/grubdrops:latest`. GitHub Actions публикует его после успешных проверок репозитория.
+Docker-образ этого форка: `ghcr.io/xyloni/grubdrops:latest`. GitHub Actions публикует его после успешных проверок репозитория.
 
-Если нужен простой запуск по HTTP, создай `compose.yml` в отдельной папке на VPS:
+Для простого запуска по HTTP создай на сервере файл `compose.yml`:
 
 ```yaml
 services:
@@ -41,16 +155,16 @@ mkdir -p data
 docker compose up -d
 ```
 
-Открой `http://IP_СЕРВЕРА:8080` и создай пароль администратора. Этот упрощённый вариант использует незашифрованный HTTP. Для постоянного публичного доступа настрой HTTPS или ограничь порт и подключайся через SSH-туннель.
+Открой `http://IP_СЕРВЕРА:8080` и задай пароль администратора. Этот простой вариант использует незашифрованный HTTP. Для постоянного публичного доступа настрой HTTPS или закрой порт от внешнего доступа и подключайся через SSH-туннель.
 
-### HTTPS-развёртывание
+#### Развёртывание с HTTPS
 
 В папке [`vps/`](vps/) находится Compose-набор с Caddy, автоматическим HTTPS и Watchtower:
 
 1. Скопируй папку `vps` на сервер и перейди в неё.
-2. Скопируй `.env.example` в `.env`; укажи `GRUB_IMAGE=ghcr.io/xyloni/grubdrops:latest`, домен в `GRUB_DOMAIN` и часовой пояс.
-3. Убедись, что DNS домена указывает на VPS и входящие порты 80 и 443 открыты.
-4. Запусти:
+2. Скопируй `.env.example` в `.env`. Укажи `GRUB_IMAGE=ghcr.io/xyloni/grubdrops:latest`, свой домен в `GRUB_DOMAIN` и часовой пояс.
+3. Направь DNS домена на VPS и открой входящие порты 80 и 443.
+4. Запусти службы:
 
    ```sh
    mkdir -p data
@@ -58,42 +172,42 @@ docker compose up -d
    docker compose -f compose.yaml -f compose.https.yaml up -d
    ```
 
-После этого открой `https://твой-домен`. Watchtower проверяет наличие обновлений образа каждые шесть часов. Чтобы применить уже опубликованное обновление сразу, из папки `vps` выполни `sh update.sh`. Если включён Kick, выполни `GRUB_VPS_KICK=1 sh update.sh`.
+Открой `https://твой-домен`. Watchtower проверяет обновления образа каждые шесть часов. Чтобы сразу применить уже опубликованное обновление, из папки `vps` выполни `sh update.sh`. Если включён Kick, выполни `GRUB_VPS_KICK=1 sh update.sh`.
 
-Если GHCR-пакет создан как приватный, сделай его публичным в настройках GitHub Packages либо настрой авторизацию Docker на VPS.
+Если GHCR-пакет приватный, сделай его публичным в настройках GitHub Packages или настрой авторизацию Docker на VPS.
 
-## Аккаунты и группы
+### Аккаунты и группы
 
 Добавляй аккаунты в **Settings → Accounts** или через мастер первоначальной настройки.
 
-Для Twitch Android TV поддерживаются записи из `account.txt` в формате:
+Записи Twitch Android TV в `account.txt` используют такой формат:
 
 ```text
 email:login:password:oauth_token:user_ID:device_ID
 ```
 
-Также поддерживается один OAuth-токен на строку. Группу можно задать заголовком вида `1:` на отдельной строке; следующие аккаунты относятся к этой группе до следующего заголовка. Группы фармят кампанию последовательно. Файл содержит учётные данные — не публикуй его и не отправляй в репозиторий.
+На каждой строке указывай полную запись или один OAuth-токен. Для разделения на группы добавь заголовок, например `1:`, на отдельной строке. Аккаунты ниже относятся к этой группе до следующего заголовка. Группы фармят одну кампанию по очереди. В файле содержатся данные аккаунтов: не публикуй его и не добавляй в репозиторий.
 
-Для Twitch также доступны вход через Android и TV-код. Для Kick можно загрузить cookies в Netscape-формате.
+Также доступны вход через Twitch Android и TV-код. Аккаунты Kick можно импортировать из cookies в формате Netscape.
 
-## Данные и безопасность
+### Данные и безопасность
 
-- База хранится в `data/miner.db`, ключ шифрования сессий — в `data/master.key`. Храни и переноси их вместе.
+- База хранится в `data/miner.db`, ключ шифрования сессий — в `data/master.key`. При резервном копировании или переносе храни их вместе.
 - Не удаляй `master.key`: без него сохранённые сессии аккаунтов нельзя расшифровать.
-- Папки `data/`, `data-test/`, файлы базы, ключи, `.env` и `account*.txt` исключены из Git.
-- Docker-образ запускается от пользователя с UID `65532`; папка `data` должна быть ему доступна на запись.
-- Монтирование Docker socket нужно только для Kick sidecar. Для Twitch его можно не подключать.
+- Git игнорирует локальные папки `data/` и `data-test/`, файлы баз данных и ключей, `.env` и файлы `account*.txt`.
+- Контейнер запускается с UID `65532`; этому пользователю нужна запись в папку `data`.
+- Docker socket нужен только для Kick sidecar. Для фарма только Twitch монтировать его не требуется.
 
-## Обновления и сборка
+### Обновление и разработка
 
-Изменения, отправленные в ветку `main` или `master`, проходят GitHub Actions. После успешного CI workflow публикует новый образ `ghcr.io/xyloni/grubdrops:latest`. На VPS с папкой `vps` Watchtower установит его автоматически; при простом Compose-запуске обнови вручную:
+Изменения, отправленные в `main` или `master`, проходят GitHub Actions. После успешного CI workflow публикует `ghcr.io/xyloni/grubdrops:latest`. Watchtower автоматически обновляет VPS. Для простого Compose-запуска обнови образ вручную:
 
 ```sh
 docker compose pull
 docker compose up -d
 ```
 
-Для сборки приложения из исходников:
+Для сборки из исходников:
 
 ```sh
 npm --prefix web ci
@@ -102,8 +216,8 @@ go build ./...
 go test ./...
 ```
 
-На Windows можно запускать `run-miner.bat`; нужен установленный Go.
+В Windows запусти `run-miner.bat`; для него должен быть установлен Go.
 
-## Лицензия и оригинальный проект
+### Лицензия и оригинальный проект
 
-Этот форк распространяется по лицензии [MIT](LICENSE). Исходный проект и его история доступны в [репозитории aalejandrofer/GrubDrops](https://github.com/aalejandrofer/GrubDrops).
+Форк распространяется по [лицензии MIT](LICENSE). Оригинальный проект и его история находятся в [aalejandrofer/GrubDrops](https://github.com/aalejandrofer/GrubDrops).

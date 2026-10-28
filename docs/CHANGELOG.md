@@ -28,6 +28,7 @@ All notable changes to GrubDrops.
 - **Force watch.** Idle accounts watch a channel you pick from Games, a drop always comes first, and live channels show on Home. The Force watch panel under the Lists rail takes a twitch.tv or kick.com channel link and the accounts that watch it, ranked with move up and down. Home gets a Force watch tile with the live channels and who watches them, and an account doing it shows Force watching. With a force watch channel that has an enabled account, Home shows the dashboard even with no games chosen. A channel whose watch fails to start is passed over for 5 minutes so the next live one is watched. Twitch force watch needs the default Twitch login, not the browser login. `GET/PUT /api/force-watch`, `GET /api/overview` gains `force_watch`, and the `force_watch` event fires after a save.
 
 ### Changed
+- **README is bilingual.** The English version now comes first, followed by the Russian translation, with language navigation at the top.
 - **README rewritten for the Xyloni/TDM fork.** Removed logos and screenshots, documented the upstream project, the fork's changes, account groups, and VPS deployment.
 - **CI and VPS image publishing support `main`.** A new GitHub repository can use its default branch while still running checks and publishing the VPS image; existing `master` branches continue to work.
 - **Accounts comes before Engine in Settings.** The Accounts section and its sub-nav link now sit right after General.
