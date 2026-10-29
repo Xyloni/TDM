@@ -4,6 +4,8 @@ All notable changes to GrubDrops.
 
 ## [Unreleased]
 
+## [2.3.0] — 2026-10-29
+
 ### Added
 - **Russian interface and notifications.** Added a complete Russian locale and made it the default for new installs and browsers without a supported language.
 - **Mark a drop collected for every account at once.** The campaign drawer adds a two-step action on each drop to mark it collected locally in GrubDrops for all scanned accounts in that campaign, so their queues can move on together. It does not claim the drop on Twitch or Kick.
