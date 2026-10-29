@@ -106,7 +106,7 @@ go build ./...
 go test ./...
 ```
 
-On Windows, run `run-miner.bat`; Go must be installed.
+On Windows, run `run-miner.bat`; Go and Node.js LTS must be installed and available in `PATH`. The launcher installs web dependencies on the first run and builds both the web interface and miner before starting.
 
 ### License and upstream project
 
@@ -216,7 +216,7 @@ go build ./...
 go test ./...
 ```
 
-В Windows запусти `run-miner.bat`; для него должен быть установлен Go.
+В Windows запусти `run-miner.bat`; должны быть установлены Go и Node.js LTS и доступны в `PATH`. При первом запуске батник установит зависимости веб-интерфейса, соберёт интерфейс и майнер, затем запустит приложение.
 
 ### Лицензия и оригинальный проект
 

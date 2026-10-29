@@ -9,7 +9,7 @@
 	import { tick, untrack } from 'svelte';
 	import { api } from '$lib/app';
 	import { ApiError } from '$lib/api/client';
-	import type { CampaignDetail, DropCell } from '$lib/api/types';
+	import type { CampaignDetail, CampaignDrop, DropCell } from '$lib/api/types';
 	import {
 		campaignEnded,
 		cellActions,
@@ -28,6 +28,7 @@
 	import { getLive } from '$lib/live-context';
 	import { prefs } from '$lib/prefs.svelte';
 	import ArmButton from './ArmButton.svelte';
+	import BulkMarkButton from './BulkMarkButton.svelte';
 	import BoxArt from './BoxArt.svelte';
 	import PlatformMark from './PlatformMark.svelte';
 
@@ -43,6 +44,8 @@
 	// Hand marks shown over the fetched cells until a rescan agrees.
 	let pending = $state<PendingMark[]>([]);
 	let markErr = $state('');
+	let markNotice = $state('');
+	let bulkBusy = $state(false);
 	const data = $derived(fetched ? withPending(fetched, pending) : null);
 	let status = $state<'loading' | 'ok' | 'gone' | 'failed'>('loading');
 	let closeBtn = $state<HTMLButtonElement | null>(null);
@@ -83,6 +86,7 @@
 			fetched = null;
 			pending = [];
 			markErr = '';
+			markNotice = '';
 			void load();
 		});
 	});
@@ -132,6 +136,37 @@
 	function cellText(c: DropCell, req: number): string {
 		if (c.state === 'claimed' && c.claimed_at) return t('campaign.claimed_on', { date: shortDate(c.claimed_at, prefs.zone) });
 		return t(cellKey(c), { m: c.minutes, req });
+	}
+
+	function unclaimedCells(drop: CampaignDrop): DropCell[] {
+		return drop.accounts.filter((c) => c.state !== 'claimed');
+	}
+
+	/** Marks this campaign drop collected in GrubDrops for every scanned account. */
+	async function markAll(drop: CampaignDrop): Promise<void> {
+		const tg = target;
+		if (!tg) return;
+		markErr = '';
+		markNotice = '';
+		bulkBusy = true;
+		try {
+			const result = await api.markCampaignDropCollectedForAll(tg.platform, tg.id, drop.id);
+			const at = new Date().toISOString();
+			const marks = unclaimedCells(drop).map((c): PendingMark => ({
+				account_id: c.account_id,
+				drop_id: drop.id,
+				kind: 'collect',
+				at,
+				until: Date.now() + PENDING_MS
+			}));
+			pending = [...pending.filter((x) => x.drop_id !== drop.id), ...marks];
+			markNotice = t('campaign.mark_all_done', { n: result.marked, already: result.already_marked });
+			void load(true);
+		} catch {
+			markErr = t('campaign.mark_all_failed');
+		} finally {
+			bulkBusy = false;
+		}
 	}
 
 	/** Marks one account's drop collected or uncollected by hand. The drawer
@@ -199,6 +234,7 @@
 			<p class="sum">{tn('campaign.summary', data.drops.length, { claimed: claimedCount(data) })}</p>
 			{#if !data.live}<p class="sum">{t('campaign.from_claims')}</p>{/if}
 			{#if markErr}<p class="msg err mark-err" role="alert">{markErr}</p>{/if}
+			{#if markNotice}<p class="msg mark-notice" role="status">{markNotice}</p>{/if}
 			{#if href}
 				<p class="link">
 					<span>{t('campaign.link_banner')}</span>
@@ -218,6 +254,16 @@
 								<span class="req" class:dim={d.required_minutes <= 0}
 									>{d.required_minutes > 0 ? t('campaign.minutes', { n: d.required_minutes }) : t('campaign.no_watch')}</span
 								>
+							{/if}
+							{#if data.live && unclaimedCells(d).length > 0}
+								<span class="bulk">
+									<BulkMarkButton
+										label={t('campaign.mark_all', { n: unclaimedCells(d).length })}
+										confirmLabel={t('campaign.mark_all_confirm', { n: unclaimedCells(d).length })}
+										disabled={bulkBusy}
+										onconfirm={() => markAll(d)}
+									/>
+								</span>
 							{/if}
 						</div>
 						<div class="cells">
@@ -458,6 +504,14 @@
 	}
 	.mark-err {
 		margin: 0;
+	}
+	.mark-notice {
+		margin: 0;
+		color: var(--green);
+	}
+	.bulk {
+		display: inline-flex;
+		justify-self: start;
 	}
 	.st {
 		color: var(--muted);

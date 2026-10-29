@@ -5,8 +5,9 @@ All notable changes to GrubDrops.
 ## [Unreleased]
 
 ### Added
+- **Mark a drop collected for every account at once.** The campaign drawer adds a two-step action on each drop to mark it collected locally in GrubDrops for all scanned accounts in that campaign, so their queues can move on together. It does not claim the drop on Twitch or Kick.
 - **One-command VPS image update.** `vps/update.sh` pulls the latest published image and recreates only the miner, with an option that preserves the Kick sidecar mount.
-- **Windows desktop launcher.** `run-miner.bat` rebuilds the Windows executable and launches it with the existing local database, so a desktop start no longer requires typing build commands in PowerShell.
+- **Windows desktop launcher.** `run-miner.bat` installs web dependencies when needed, builds the web interface and Go executable, then launches the miner, so a fresh checkout works without separate build commands in PowerShell.
 - **Auto-advance past fully watched unlinked drops.** The Engine setting is on by default. When Twitch reports full watch time but the drop needs an external game link, GrubDrops records a local skip and continues to dependent drops; it does not claim the reward on Twitch.
 - **Remove all accounts at once.** Settings → Accounts can now delete every saved account and its session and group assignment after confirmation, making it faster to reimport an account list.
 - **VPS Docker deployment bundle.** Added `vps/` Compose files for GHCR image deployment, persistent database/key storage, Caddy HTTPS, automatic image updates, local source builds, and optional Kick sidecars. GitHub Actions publishes the fork's image after CI passes and uses the fork owner for tagged releases.

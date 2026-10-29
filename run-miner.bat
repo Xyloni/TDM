@@ -10,6 +10,34 @@ if errorlevel 1 (
     exit /b 1
 )
 
+where npm.cmd >nul 2>nul
+if errorlevel 1 (
+    echo Node.js and npm are not installed or are not available in PATH.
+    echo Install the Node.js LTS version, then open a new terminal and try again.
+    pause
+    exit /b 1
+)
+
+if not exist ".\web\node_modules" (
+    echo Installing web interface dependencies...
+    call npm.cmd --prefix web ci
+    if errorlevel 1 (
+        echo.
+        echo Dependency installation failed. Check your internet connection and try again.
+        pause
+        exit /b 1
+    )
+)
+
+echo Building web interface...
+call npm.cmd --prefix web run build
+if errorlevel 1 (
+    echo.
+    echo Web interface build failed. The miner was not started.
+    pause
+    exit /b 1
+)
+
 if not exist ".\data-test" mkdir ".\data-test"
 
 echo Building GrubDrops for Windows...

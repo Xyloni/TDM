@@ -46,6 +46,119 @@ type campaignDetailJSON struct {
 
 func (s *server) routesCampaigns(r chi.Router) {
 	r.Get("/campaigns/{platform}/{id}", s.getCampaign)
+	r.Post("/campaigns/{platform}/{id}/drops/{benefit}/claim-all", s.postCampaignDropClaimAll)
+}
+
+// postCampaignDropClaimAll marks a campaign drop collected locally for every
+// stored account whose scan includes that drop. It does not call the platform.
+func (s *server) postCampaignDropClaimAll(w http.ResponseWriter, r *http.Request) {
+	pf, id, benefitID := chi.URLParam(r, "platform"), pathParam(r, "id"), pathParam(r, "benefit")
+	if pf != "twitch" && pf != "kick" {
+		writeErr(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	if s.d.Board == nil || s.d.Claims == nil {
+		writeErr(w, http.StatusNotFound, "not_found")
+		return
+	}
+	detail, live := s.d.Board.Campaign(pf, id)
+	if !live {
+		writeErr(w, http.StatusNotFound, "not_found")
+		return
+	}
+	var drop *collect.CampaignDrop
+	for i := range detail.Drops {
+		if detail.Drops[i].ID == benefitID {
+			drop = &detail.Drops[i]
+			break
+		}
+	}
+	if drop == nil || len(drop.Cells) == 0 {
+		writeErr(w, http.StatusNotFound, "not_found")
+		return
+	}
+
+	ctx := r.Context()
+	accounts, err := s.d.Q.ListAllAccounts(ctx)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal")
+		return
+	}
+	known := make(map[string]string, len(accounts))
+	for _, a := range accounts {
+		if a.Platform == pf {
+			known[a.ID] = store.AccountName(a)
+		}
+	}
+	prior, err := s.d.Claims.ForCampaign(ctx, pf, id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal")
+		return
+	}
+	claimed := make(map[string]bool, len(prior))
+	for _, e := range prior {
+		if e.BenefitID == benefitID {
+			claimed[e.AccountID] = true
+		}
+	}
+
+	markedItems := make([]claimItem, 0, len(drop.Cells))
+	entries := make([]store.ClaimEntry, 0, len(drop.Cells))
+	alreadyMarked := 0
+	now := s.overviewNow()
+	for _, cell := range drop.Cells {
+		accountName, ok := known[cell.AccountID]
+		if !ok {
+			continue
+		}
+		if claimed[cell.AccountID] {
+			alreadyMarked++
+			continue
+		}
+		entry := store.ClaimEntry{
+			AccountID: cell.AccountID, Platform: pf, Game: detail.Campaign.Game,
+			CampaignID: detail.Campaign.ID, CampaignName: detail.Campaign.Name,
+			BenefitID: drop.ID, BenefitName: drop.Name, ImageURL: drop.ImageURL,
+			Source: store.ClaimSourceManual, ClaimedAt: now,
+		}
+		claimed[cell.AccountID] = true
+		entries = append(entries, entry)
+		markedItems = append(markedItems, ClaimJSON(entry, accountName))
+	}
+	if len(markedItems) == 0 && alreadyMarked == 0 {
+		writeErr(w, http.StatusNotFound, "no_accounts")
+		return
+	}
+	if len(entries) > 0 {
+		tx, err := s.d.DB.BeginTx(ctx, nil)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "internal")
+			return
+		}
+		defer tx.Rollback() //nolint:errcheck // no-op after commit
+		txClaims := store.NewClaimLog(s.d.Q.WithTx(tx))
+		for _, entry := range entries {
+			if err := txClaims.Record(ctx, entry); err != nil {
+				writeErr(w, http.StatusInternalServerError, "internal")
+				return
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			writeErr(w, http.StatusInternalServerError, "internal")
+			return
+		}
+	}
+
+	for _, item := range markedItems {
+		s.accountChanged(item.AccountID)
+		if s.d.Hub != nil {
+			s.d.Hub.Publish(Event{Name: EventClaim, Data: item})
+		}
+	}
+	if s.d.Hub != nil && len(markedItems) > 0 {
+		s.d.Hub.Publish(Event{Name: EventAccounts, Data: struct{}{}})
+	}
+	writeJSON(w, http.StatusOK, map[string]int{"marked": len(markedItems), "already_marked": alreadyMarked})
 }
 
 // getCampaign shows one campaign with every drop and each account's state on

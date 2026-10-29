@@ -239,6 +239,8 @@ export function createClient(opts: ClientOpts): Api {
 			return get(`/api/claims${qs ? `?${qs}` : ''}`);
 		},
 		campaign: (platform, id) => get(`/api/campaigns/${enc(platform)}/${enc(id)}`),
+		markCampaignDropCollectedForAll: (platform, campaignId, benefitId) =>
+			post(`/api/campaigns/${enc(platform)}/${enc(campaignId)}/drops/${enc(benefitId)}/claim-all`) as Promise<{ marked: number; already_marked: number }>,
 		accounts: () => get('/api/accounts'),
 		forceWatch: () => get('/api/force-watch'),
 		putForceWatch: (channels) =>
