@@ -147,7 +147,7 @@
 				const v = Number(e.currentTarget.value);
 				if (e.isTrusted && v !== s.account_group_wave_size) void save('account_group_wave_size', { account_group_wave_size: v });
 			}}>
-				{#each waveOptions as n (n)}<option value={n}>{n}</option>{/each}
+				{#each waveOptions as n (`wave-${n}`)}<option value={n}>{n}</option>{/each}
 			</select>
 		</div>
 	</div>
