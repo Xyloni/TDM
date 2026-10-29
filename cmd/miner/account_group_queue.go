@@ -91,11 +91,30 @@ func (ro *roster) checkAccountGroupQueue() {
 		return
 	}
 	ro.log().Info("account group queue advanced", "kind", "state", "from_group", previous, "to_group", next.Active, "campaign", focus, "next_campaign", next.CampaignID == "")
+	waveSize, err := ro.settings.AccountGroupWaveSize(ctx)
+	if err != nil {
+		waveSize = 20
+	}
+	var nextMembers []string
 	for _, account := range accounts {
 		group := state.Groups[account.ID]
-		if group == previous || group == next.Active {
+		if group == previous {
 			ro.reloadAccount(account.ID)
+		} else if group == next.Active {
+			nextMembers = append(nextMembers, account.ID)
 		}
+	}
+	for i, id := range nextMembers {
+		if i > 0 && i%waveSize == 0 {
+			timer := time.NewTimer(time.Second)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+		}
+		ro.reloadAccount(id)
 	}
 	if ro.hub != nil {
 		ro.hub.Publish(api.Event{Name: api.EventAccounts, Data: struct{}{}})

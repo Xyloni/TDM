@@ -659,5 +659,7 @@
   "welcome.remove": "移除 {game}",
   "welcome.back": "返回",
   "welcome.continue": "继续",
-  "welcome.start": "开始挖取"
+  "welcome.start": "开始挖取",
+  "settings.group_wave_size": "账号波次大小",
+  "settings.group_wave_size_sub": "队列切换时，下一组每次同时启动的账号数量。"
 }

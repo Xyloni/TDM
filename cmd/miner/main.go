@@ -537,7 +537,7 @@ func run(ctx context.Context) error {
 		if proxyTransport != nil {
 			updateClient.Transport = proxyTransport
 		}
-		updateChecker = update.NewChecker(updateClient, "aalejandrofer/GrubDrops", settingsStore)
+		updateChecker = update.NewChecker(updateClient, "xyloni/TDM", settingsStore)
 		updateInterval := parseDuration(os.Getenv("GRUB_UPDATE_INTERVAL"), time.Hour)
 		bg.Go(func() { updateChecker.Run(ctx, updateInterval) })
 		updateStatus = updateChecker.Status

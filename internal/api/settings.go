@@ -81,9 +81,10 @@ type settingsBody struct {
 	UpdateAuto    bool             `json:"update_auto"`
 	PriorityMode  string           `json:"priority_mode"`
 	// ScanIntervalMin is how often accounts check for new campaigns.
-	ScanIntervalMin  int  `json:"scan_interval_min"`
-	Preempt          bool `json:"preempt"`
-	AutoSkipUnlinked bool `json:"auto_skip_unlinked"`
+	ScanIntervalMin      int  `json:"scan_interval_min"`
+	AccountGroupWaveSize int  `json:"account_group_wave_size"`
+	Preempt              bool `json:"preempt"`
+	AutoSkipUnlinked     bool `json:"auto_skip_unlinked"`
 	// Proxy, KickWatchMode and the canary interval apply after a restart.
 	Proxy           settingsProxy  `json:"proxy"`
 	KickWatchMode   string         `json:"kick_watch_mode"`
@@ -172,6 +173,9 @@ func (s *server) loadSettings(ctx context.Context) (settingsBody, error) {
 		return b, err
 	}
 	if b.ScanIntervalMin, err = st.ScanIntervalMin(ctx); err != nil {
+		return b, err
+	}
+	if b.AccountGroupWaveSize, err = st.AccountGroupWaveSize(ctx); err != nil {
 		return b, err
 	}
 	if b.Preempt, err = st.Preempt(ctx); err != nil {
@@ -265,10 +269,11 @@ type settingsPut struct {
 		Progress     *bool `json:"progress"`
 		Canary       *bool `json:"canary"`
 	} `json:"notify"`
-	UpdateAuto       *bool `json:"update_auto"`
-	ScanIntervalMin  *int  `json:"scan_interval_min"`
-	Preempt          *bool `json:"preempt"`
-	AutoSkipUnlinked *bool `json:"auto_skip_unlinked"`
+	UpdateAuto           *bool `json:"update_auto"`
+	ScanIntervalMin      *int  `json:"scan_interval_min"`
+	AccountGroupWaveSize *int  `json:"account_group_wave_size"`
+	Preempt              *bool `json:"preempt"`
+	AutoSkipUnlinked     *bool `json:"auto_skip_unlinked"`
 	// Proxy is accepted so a client can send the GET body back. Ignored.
 	Proxy           json.RawMessage `json:"proxy"`
 	ProxyEnabled    *bool           `json:"proxy_enabled"`
@@ -338,6 +343,7 @@ func (s *server) putSettings(w http.ResponseWriter, r *http.Request) {
 		(req.TelegramBotToken == nil || validOptional(telegramTokenRe, *req.TelegramBotToken)) &&
 		(req.TelegramChatID == nil || validOptional(telegramChatRe, *req.TelegramChatID)) &&
 		(req.ScanIntervalMin == nil || slices.Contains(store.ScanIntervals, *req.ScanIntervalMin)) &&
+		(req.AccountGroupWaveSize == nil || (*req.AccountGroupWaveSize >= 1 && *req.AccountGroupWaveSize <= 500)) &&
 		(req.ProxyURL == nil || validProxy(*req.ProxyURL)) &&
 		(req.KickWatchMode == nil || oneOf(*req.KickWatchMode, store.KickWatchModeBrowser, store.KickWatchModeWS, store.KickWatchModeAuto)) &&
 		(req.NotifyAvatarURL == nil || validAvatar(*req.NotifyAvatarURL)) &&
@@ -469,6 +475,11 @@ func (s *server) applySettings(ctx context.Context, req settingsPut) error {
 // applyEngineSettings saves the scan, proxy, Kick and canary settings.
 func (s *server) applyEngineSettings(ctx context.Context, req settingsPut) error {
 	st := s.d.Settings
+	if req.AccountGroupWaveSize != nil {
+		if err := st.SetAccountGroupWaveSize(ctx, *req.AccountGroupWaveSize); err != nil {
+			return err
+		}
+	}
 	if req.ScanIntervalMin != nil {
 		if err := st.SetScanIntervalMin(ctx, *req.ScanIntervalMin); err != nil {
 			return err

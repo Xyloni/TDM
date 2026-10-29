@@ -321,6 +321,8 @@ export interface Settings {
 	priority_mode: 'ordered' | 'ending_soonest';
 	/** Minutes between campaign scans; one of SCAN_INTERVALS. */
 	scan_interval_min: number;
+	/** Number of accounts restarted together on account-group transitions. */
+	account_group_wave_size: number;
 	/** Leave a drop when a higher-ranked campaign goes live. */
 	preempt: boolean;
 	/** Locally advances past fully watched Twitch rewards that require a game link. */
@@ -343,6 +345,7 @@ export interface SettingsPatch {
 	update_auto?: boolean;
 	priority_mode?: Settings['priority_mode'];
 	scan_interval_min?: number;
+	account_group_wave_size?: number;
 	preempt?: boolean;
 	auto_skip_unlinked?: boolean;
 	proxy_enabled?: boolean;

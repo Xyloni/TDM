@@ -659,5 +659,7 @@
   "welcome.remove": "{game} kaldır",
   "welcome.back": "Geri",
   "welcome.continue": "Devam",
-  "welcome.start": "Madenciliğe başla"
+  "welcome.start": "Madenciliğe başla",
+  "settings.group_wave_size": "Hesap dalgası boyutu",
+  "settings.group_wave_size_sub": "Kuyruk geçişinde sonraki gruptan aynı anda başlatılacak hesap sayısı."
 }

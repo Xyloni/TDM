@@ -659,5 +659,7 @@
   "welcome.remove": "Remove {game}",
   "welcome.back": "Back",
   "welcome.continue": "Continue",
-  "welcome.start": "Start mining"
+  "welcome.start": "Start mining",
+  "settings.group_wave_size": "Account wave size",
+  "settings.group_wave_size_sub": "How many accounts in the next group to start at once during a queue transition."
 }

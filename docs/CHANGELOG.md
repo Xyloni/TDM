@@ -4,6 +4,10 @@ All notable changes to GrubDrops.
 
 ## [Unreleased]
 
+### Changed
+- **Check updates from this fork.** The in-app update checker now reads releases from `xyloni/TDM` instead of the upstream repository.
+- **Stagger account group transitions.** Choose how many accounts start together in Settings to smooth CPU load when the queue moves to the next group.
+
 ### Fixed
 - **Release image builds with a mixed-case GitHub owner.** Use the lowercase GHCR owner for every image reference, and allow rerunning a release build for an existing version after workflow fixes.
 

@@ -16,6 +16,7 @@
 	} = $props();
 
 	const scanOptions = $derived(SCAN_INTERVALS.includes(s.scan_interval_min) ? SCAN_INTERVALS : [...SCAN_INTERVALS, s.scan_interval_min]);
+	const waveOptions = $derived([5, 10, 20, 50, 100, s.account_group_wave_size].filter((v, i, a) => a.indexOf(v) === i).sort((a, b) => a - b));
 
 	const KICK_MODES = [
 		{ id: 'auto', key: 'settings.kick_auto', sub: 'settings.kick_auto_sub' },
@@ -134,6 +135,19 @@
 				}}
 			>
 				{#each scanOptions as m (m)}<option value={m}>{minutesLabel(m)}</option>{/each}
+			</select>
+		</div>
+		<div class="row">
+			<div class="lbl">
+				<b><label for="group-wave">{t('settings.group_wave_size')}</label></b>
+				<small>{t('settings.group_wave_size_sub')}</small>
+				{#if errs.account_group_wave_size}<small class="bad">{t('settings.save_failed')}</small>{/if}
+			</div>
+			<select class="sel" id="group-wave" autocomplete="off" value={s.account_group_wave_size} onchange={(e) => {
+				const v = Number(e.currentTarget.value);
+				if (e.isTrusted && v !== s.account_group_wave_size) void save('account_group_wave_size', { account_group_wave_size: v });
+			}}>
+				{#each waveOptions as n (n)}<option value={n}>{n}</option>{/each}
 			</select>
 		</div>
 	</div>

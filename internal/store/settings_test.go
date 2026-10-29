@@ -215,3 +215,19 @@ func TestSettings_ScanAndPreempt(t *testing.T) {
 	n, _ = s.ScanIntervalMin(ctx)
 	assert.Equal(t, 60, n)
 }
+
+func TestSettings_AccountGroupWaveSize(t *testing.T) {
+	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "t.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	s := NewSettings(gen.New(db))
+	ctx := context.Background()
+	n, err := s.AccountGroupWaveSize(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 20, n)
+	require.NoError(t, s.SetAccountGroupWaveSize(ctx, 35))
+	n, err = s.AccountGroupWaveSize(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 35, n)
+	assert.Error(t, s.SetAccountGroupWaveSize(ctx, 0))
+}

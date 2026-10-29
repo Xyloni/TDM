@@ -659,5 +659,7 @@
   "welcome.remove": "Удалить игру {game}",
   "welcome.back": "Назад",
   "welcome.continue": "Продолжить",
-  "welcome.start": "Начать фарм"
+  "welcome.start": "Начать фарм",
+  "settings.group_wave_size": "Размер волны аккаунтов",
+  "settings.group_wave_size_sub": "Сколько аккаунтов следующей группы запускать за раз при переходе очереди."
 }

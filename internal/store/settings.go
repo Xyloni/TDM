@@ -442,15 +442,16 @@ func (s *Settings) SetTimezone(ctx context.Context, name string) error {
 
 // v2 UI settings
 const (
-	keyUILanguage         = "settings:ui_language"
-	keyUITimeFormat       = "settings:ui_time_format"
-	keyUITheme            = "settings:ui_theme"
-	keyNotifyDailySummary = "settings:notify_daily_summary"
-	keyUpdateAuto         = "settings:update_auto"
-	keyPriorityMode       = "settings:priority_mode"
-	keyScanIntervalMin    = "settings:scan_interval_min"
-	keyPreempt            = "settings:preempt"
-	keyAutoSkipUnlinked   = "settings:auto_skip_unlinked"
+	keyUILanguage           = "settings:ui_language"
+	keyUITimeFormat         = "settings:ui_time_format"
+	keyUITheme              = "settings:ui_theme"
+	keyNotifyDailySummary   = "settings:notify_daily_summary"
+	keyUpdateAuto           = "settings:update_auto"
+	keyPriorityMode         = "settings:priority_mode"
+	keyScanIntervalMin      = "settings:scan_interval_min"
+	keyAccountGroupWaveSize = "settings:account_group_wave_size"
+	keyPreempt              = "settings:preempt"
+	keyAutoSkipUnlinked     = "settings:auto_skip_unlinked"
 )
 
 // ScanIntervals are the allowed scan paces, in minutes: 15 minutes to 24 hours.
@@ -475,6 +476,26 @@ func (s *Settings) SetScanIntervalMin(ctx context.Context, n int) error {
 		return fmt.Errorf("invalid value %d for %s", n, keyScanIntervalMin)
 	}
 	return s.setString(ctx, keyScanIntervalMin, strconv.Itoa(n))
+}
+
+// AccountGroupWaveSize is the number of accounts started together when the account-group queue advances. Default 20.
+func (s *Settings) AccountGroupWaveSize(ctx context.Context) (int, error) {
+	v, err := s.getString(ctx, keyAccountGroupWaveSize)
+	if err != nil {
+		return 20, err
+	}
+	n, parseErr := strconv.Atoi(v)
+	if parseErr != nil || n < 1 || n > 500 {
+		return 20, nil
+	}
+	return n, nil
+}
+
+func (s *Settings) SetAccountGroupWaveSize(ctx context.Context, n int) error {
+	if n < 1 || n > 500 {
+		return fmt.Errorf("invalid account group wave size %d", n)
+	}
+	return s.setString(ctx, keyAccountGroupWaveSize, strconv.Itoa(n))
 }
 
 // Preempt reports whether a watching account switches to a campaign that now

@@ -659,5 +659,7 @@
   "welcome.remove": "Quitar {game}",
   "welcome.back": "Atrás",
   "welcome.continue": "Continuar",
-  "welcome.start": "Empezar a minar"
+  "welcome.start": "Empezar a minar",
+  "settings.group_wave_size": "Tamaño de la ola de cuentas",
+  "settings.group_wave_size_sub": "Cuántas cuentas del siguiente grupo iniciar a la vez al cambiar de grupo."
 }
