@@ -76,6 +76,12 @@ export interface Api {
 	claims(q: ClaimsQuery): Promise<ClaimsResp>;
 	/** Every drop of one campaign with each account's state; 404 when unknown. */
 	campaign(platform: Platform, id: string): Promise<CampaignDetail>;
+	/** Marks a campaign drop collected locally for every account on that platform. */
+	markCampaignDropCollectedForAll(
+		platform: Platform,
+		campaignId: string,
+		benefitId: string
+	): Promise<{ marked: number; already_marked: number }>;
 	/** Marks a planned drop collected by hand. */
 	markCollected(accountId: string, benefitId: string): Promise<Claim>;
 	removeClaim(accountId: string, benefitId: string): Promise<void>;
