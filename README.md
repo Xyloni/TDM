@@ -16,6 +16,7 @@ A self-hosted Twitch Drops and Kick Drops miner with a web interface, SQLite sto
 - Mine account groups from `account.txt` sequentially.
 - Retry incomplete Twitch Inventory responses so a temporary API error does not make an account switch to the wrong reward.
 - Send notifications through Discord and Telegram; optionally use OIDC sign-in.
+- Use the interface in Russian, English, Spanish, Turkish, or Simplified Chinese. Russian is the default for new installs.
 - Run on Windows or deploy to a VPS with Docker Compose.
 
 ### Quick start on a VPS
@@ -126,6 +127,7 @@ This fork is distributed under the [MIT License](LICENSE). The original project 
 - Последовательный фарм групп аккаунтов из `account.txt`.
 - Повторный запрос неполного Inventory Twitch, чтобы временная ошибка API не переключала аккаунт на неправильную награду.
 - Уведомления через Discord и Telegram, а также вход через OIDC.
+- Интерфейс на русском, английском, испанском, турецком и упрощённом китайском языках. Для новых установок по умолчанию выбран русский.
 - Запуск на Windows и развёртывание на VPS через Docker Compose.
 
 ### Быстрый запуск на VPS

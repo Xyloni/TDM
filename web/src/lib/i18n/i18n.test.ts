@@ -4,7 +4,7 @@ import { matchLang, messages, setLang, t, tn } from './index.svelte';
 beforeEach(() => {
 	setLang('en');
 	messages.en['test.only_en'] = 'only en';
-	for (const l of ['en', 'es', 'zh-CN', 'tr'] as const) {
+	for (const l of ['en', 'es', 'zh-CN', 'tr', 'ru'] as const) {
 		delete messages[l]['test.item.one'];
 		delete messages[l]['test.item.other'];
 	}
@@ -15,6 +15,8 @@ beforeEach(() => {
 	messages['zh-CN']['test.item.other'] = '{n} 项';
 	messages.tr['test.item.one'] = '{n} öğe';
 	messages.tr['test.item.other'] = '{n} öğe';
+	messages.ru['test.item.one'] = '{n} предмет';
+	messages.ru['test.item.other'] = 'Предметов: {n}';
 });
 
 test('t interpolates {n}', () => {
@@ -50,5 +52,6 @@ test('matchLang', () => {
 	expect(matchLang(['zh-Hans-CN'])).toBe('zh-CN');
 	expect(matchLang(['es-MX', 'en'])).toBe('es');
 	expect(matchLang(['tr-TR'])).toBe('tr');
-	expect(matchLang(['fr'])).toBe('en');
+	expect(matchLang(['ru-RU'])).toBe('ru');
+	expect(matchLang(['fr'])).toBe('ru');
 });

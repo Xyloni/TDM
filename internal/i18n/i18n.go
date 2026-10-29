@@ -27,9 +27,9 @@ var (
 )
 
 // Supported lists the locales the miner ships; each must have every key in en.
-var Supported = []string{"en", "zh-CN", "es", "tr"}
+var Supported = []string{"ru", "en", "zh-CN", "es", "tr"}
 
-const defaultLang = "en"
+const defaultLang = "ru"
 
 func init() {
 	// Auto-load locales at package init so T works in tests too.

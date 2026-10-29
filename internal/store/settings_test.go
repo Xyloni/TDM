@@ -165,7 +165,7 @@ func TestSettings_UIDefaults(t *testing.T) {
 	th, _ := s.UITheme(ctx)
 	sum, _ := s.NotifyDailySummary(ctx)
 	auto, _ := s.UpdateAuto(ctx)
-	assert.Equal(t, "en", lang)
+	assert.Equal(t, "ru", lang)
 	assert.Equal(t, "24h", tf)
 	assert.Equal(t, "dark", th)
 	assert.False(t, sum)

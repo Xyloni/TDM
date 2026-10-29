@@ -82,7 +82,7 @@ func TestSettings_GetMasksWebhook(t *testing.T) {
 	require.NoError(t, json.Unmarshal(b, &got))
 	assert.Equal(t, map[string]any{"configured": true, "webhook_hint": "https://discord.com/api/webhooks/••••"}, got["discord"])
 	assert.NotContains(t, string(b), "abc")
-	assert.Equal(t, "en", got["language"])
+	assert.Equal(t, "ru", got["language"])
 	assert.Equal(t, "24h", got["time_format"])
 	assert.Equal(t, "dark", got["theme"])
 	assert.Equal(t, true, got["update_auto"])
@@ -98,7 +98,7 @@ func TestSettings_PutPartial(t *testing.T) {
 	var got settingsBody
 	require.NoError(t, json.Unmarshal(b, &got))
 	assert.Equal(t, "light", got.Theme)
-	assert.Equal(t, "en", got.Language)
+	assert.Equal(t, "ru", got.Language)
 	assert.Equal(t, "24h", got.TimeFormat)
 	assert.True(t, got.UpdateAuto)
 	assert.Equal(t, 1, e.updates)

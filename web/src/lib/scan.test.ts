@@ -1,5 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { setLang } from '$lib/i18n/index.svelte';
 import { scanStamp } from './scan';
+
+beforeEach(() => setLang('en'));
 
 const now = new Date('2026-10-25T12:00:00Z');
 const at = (s: number) => new Date(now.getTime() + s * 1000).toISOString();

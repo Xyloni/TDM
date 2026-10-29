@@ -84,7 +84,7 @@ type Config struct {
 	CampaignFocus                     func() string        // nil/empty = normal campaign order
 	Priority                          func() plan.Priority // read at each plan; nil = ordered
 	AutoSkipUnlinked                  func() bool          // fully watched Twitch drops needing a game link; default on
-	Lang                              func() string        // notification language; nil = en
+	Lang                              func() string        // notification language; nil uses the default locale
 	// ScanEvery is the plan rebuild pace, while watching and while sleeping
 	// with an empty queue. Read live; nil or <=0 = the package defaults.
 	ScanEvery func() time.Duration

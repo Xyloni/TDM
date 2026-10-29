@@ -26,7 +26,7 @@ export function loadLocales(dir) {
 
 /** @param {string} p */
 function isNonProduction(p) {
-	return p.endsWith('.test.ts') || p.split('/').includes('fixtures');
+	return p.endsWith('.test.ts') || p.split(/[\\/]/).includes('fixtures');
 }
 
 /** Text to scan: every web/src ts and svelte file, plus the `i18n.T(...)` calls of Go files outside web/. */

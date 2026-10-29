@@ -2,11 +2,13 @@ import en from '$locales/en.json';
 import es from '$locales/es.json';
 import zhCN from '$locales/zh-CN.json';
 import tr from '$locales/tr.json';
+import ru from '$locales/ru.json';
 
-export type Lang = 'en' | 'es' | 'zh-CN' | 'tr';
+export type Lang = 'en' | 'es' | 'zh-CN' | 'tr' | 'ru';
 export type Vars = Record<string, string | number>;
 
 export const LANGS: { code: Lang; label: string }[] = [
+	{ code: 'ru', label: 'Русский' },
 	{ code: 'en', label: 'English' },
 	{ code: 'es', label: 'Español' },
 	{ code: 'zh-CN', label: '简体中文' },
@@ -18,10 +20,11 @@ export const messages: Record<Lang, Record<string, string>> = {
 	en: { ...en },
 	es: { ...es },
 	'zh-CN': { ...zhCN },
-	tr: { ...tr }
+	tr: { ...tr },
+	ru: { ...ru }
 };
 
-export const i18n: { lang: Lang } = $state({ lang: 'en' });
+export const i18n: { lang: Lang } = $state({ lang: 'ru' });
 
 export function setLang(l: Lang): void {
 	i18n.lang = l;
@@ -34,9 +37,10 @@ export function matchLang(prefs: readonly string[]): Lang {
 		if (s.startsWith('zh')) return 'zh-CN';
 		if (s.startsWith('es')) return 'es';
 		if (s.startsWith('tr')) return 'tr';
+		if (s.startsWith('ru')) return 'ru';
 		if (s.startsWith('en')) return 'en';
 	}
-	return 'en';
+	return 'ru';
 }
 
 function fill(s: string, vars?: Vars): string {

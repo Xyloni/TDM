@@ -120,7 +120,7 @@ func TestSummary_SendsYesterday(t *testing.T) {
 	assert.Equal(t, "2026-05-10", got[0].fields["day"])
 	assert.Equal(t, 50, got[0].fields["minutes"])
 	assert.Equal(t, 2, got[0].fields["claims"])
-	assert.Equal(t, "2026-05-10: 50 min watched, 2 drops claimed.", got[0].fields["msg"])
+	assert.Equal(t, "2026-05-10: просмотрено 50 мин., получено наград: 2.", got[0].fields["msg"])
 }
 
 func TestSummary_ToggleOffSendsNothing(t *testing.T) {

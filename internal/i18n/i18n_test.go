@@ -3,7 +3,7 @@ package i18n
 import "testing"
 
 // TestLocaleParity ensures every supported locale defines exactly the same key
-// set as the default (en) locale — no missing keys, no stray extras.
+// set as the default (ru) locale — no missing keys, no stray extras.
 func TestLocaleParity(t *testing.T) {
 	if err := Load(); err != nil {
 		t.Fatalf("Load: %v", err)
@@ -41,5 +41,11 @@ func TestSpanishLoaded(t *testing.T) {
 	}
 	if got := T("es", "summary.title"); got != "Resumen diario" {
 		t.Errorf("T(es, summary.title) = %q, want %q", got, "Resumen diario")
+	}
+}
+
+func TestRussianLoaded(t *testing.T) {
+	if got := T("ru", "summary.title"); got != "Сводка за день" {
+		t.Errorf("T(ru, summary.title) = %q, want %q", got, "Сводка за день")
 	}
 }

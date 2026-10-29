@@ -305,7 +305,7 @@ export interface AccountGames {
 }
 
 export interface Settings {
-	language: 'en' | 'es' | 'zh-CN' | 'tr';
+	language: 'en' | 'es' | 'zh-CN' | 'tr' | 'ru';
 	time_format: '24h' | '12h';
 	theme: 'dark' | 'light';
 	/** Empty means the server zone. */

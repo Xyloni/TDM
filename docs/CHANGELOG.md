@@ -5,6 +5,7 @@ All notable changes to GrubDrops.
 ## [Unreleased]
 
 ### Added
+- **Russian interface and notifications.** Added a complete Russian locale and made it the default for new installs and browsers without a supported language.
 - **Mark a drop collected for every account at once.** The campaign drawer adds a two-step action on each drop to mark it collected locally in GrubDrops for all scanned accounts in that campaign, so their queues can move on together. It does not claim the drop on Twitch or Kick.
 - **One-command VPS image update.** `vps/update.sh` pulls the latest published image and recreates only the miner, with an option that preserves the Kick sidecar mount.
 - **Windows desktop launcher.** `run-miner.bat` installs web dependencies when needed, builds the web interface and Go executable, then launches the miner, so a fresh checkout works without separate build commands in PowerShell.

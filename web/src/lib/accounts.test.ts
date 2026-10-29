@@ -1,15 +1,18 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import type { Api } from '$lib/api/client';
 import type { Account, DeviceStatus, Runner } from '$lib/api/types';
 import accountsFx from '$lib/fixtures/accounts.json';
 import runnersMining from '$lib/fixtures/runners.mining.json';
 import { prefs } from '$lib/prefs.svelte';
+import { setLang } from '$lib/i18n/index.svelte';
 import { MAX_POLL_FAILS, POLL_MS, accountLine, activateURL, accountStatus, commitAccountOrder, createDeviceFlow, renameRequest, rowActions } from './accounts';
 import { moveTarget } from './games';
 import { moveItem } from './upnext';
 
 const ACC = (id: string) => structuredClone(accountsFx.find((a) => a.id === id)) as Account;
 const RUN = (id: string) => structuredClone(runnersMining.find((r) => r.account_id === id)) as Runner;
+
+beforeEach(() => setLang('en'));
 
 function fake(statuses: DeviceStatus['status'][]) {
 	const calls = { start: 0, status: 0, removed: [] as string[] };
