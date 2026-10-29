@@ -4,6 +4,9 @@ All notable changes to GrubDrops.
 
 ## [Unreleased]
 
+### Fixed
+- **Release image builds with a mixed-case GitHub owner.** Use the lowercase GHCR owner for every image reference, and allow rerunning a release build for an existing version after workflow fixes.
+
 ## [2.3.0] — 2026-10-29
 
 ### Added

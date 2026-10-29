@@ -3,10 +3,20 @@ name: Release images
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release tag to publish, such as v1.0.0
+        required: true
+        type: string
 
 permissions:
   contents: read
   packages: write
+
+env:
+  IMAGE_OWNER: xyloni
+  RELEASE_VERSION: ${{ inputs.version || github.ref_name }}
 
 # Build each image on a NATIVE runner per arch (amd64 on ubuntu-latest, arm64 on
 # ubuntu-24.04-arm) instead of emulating arm64 via QEMU. The browser sidecar's
@@ -50,8 +60,8 @@ jobs:
           # Harmless for the browser image (no ARG VERSION); the miner reads it
           # via -ldflags so Settings shows the running tag.
           build-args: |
-            VERSION=${{ github.ref_name }}
-          outputs: type=image,name=ghcr.io/${{ github.repository_owner }}/${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true
+            VERSION=${{ env.RELEASE_VERSION }}
+          outputs: type=image,name=ghcr.io/${{ env.IMAGE_OWNER }}/${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true
           # Cache scoped per image+arch so an amd64 change doesn't bust the arm64
           # cache (and vice-versa).
           cache-from: type=gha,scope=${{ matrix.image }}-${{ matrix.arch }}
@@ -98,9 +108,9 @@ jobs:
         working-directory: /tmp/digests
         run: |
           docker buildx imagetools create \
-            -t ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:${{ github.ref_name }} \
-            -t ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:latest \
-            $(printf 'ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}@sha256:%s ' *)
+            -t ghcr.io/${{ env.IMAGE_OWNER }}/${{ matrix.image }}:${{ env.RELEASE_VERSION }} \
+            -t ghcr.io/${{ env.IMAGE_OWNER }}/${{ matrix.image }}:latest \
+            $(printf 'ghcr.io/${{ env.IMAGE_OWNER }}/${{ matrix.image }}@sha256:%s ' *)
 
       - name: Inspect
-        run: docker buildx imagetools inspect ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:${{ github.ref_name }}
+        run: docker buildx imagetools inspect ghcr.io/${{ env.IMAGE_OWNER }}/${{ matrix.image }}:${{ env.RELEASE_VERSION }}
