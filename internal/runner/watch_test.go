@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,13 @@ import (
 func steps(t *testing.T, r *Runner, n int) {
 	t.Helper()
 	for i := 0; i < n; i++ {
+		// Nanosecond cadence means a simulated tick, independent of the host
+		// clock resolution (Windows may return the same time on adjacent calls).
+		if r.cfg.TickInterval == time.Nanosecond {
+			r.mu.Lock()
+			r.lastBeatAt = time.Time{}
+			r.mu.Unlock()
+		}
 		if err := r.step(context.Background()); err != nil {
 			t.Fatalf("step %d (%s): %v", i, r.State(), err)
 		}
@@ -95,6 +103,21 @@ func TestWatch_BeaconEveryTick(t *testing.T) {
 	steps(t, r, 3)
 	if n := f.CallCount("Heartbeat:"); n != 3 {
 		t.Fatalf("heartbeats=%d", n)
+	}
+}
+
+func TestWatchInventoryFailureKeepsWatchAndRetries(t *testing.T) {
+	f := platformtest.NewFake()
+	r := watching(t, f, nil)
+	f.InventoryErr = errors.New("temporary upstream failure")
+	steps(t, r, 1)
+	if r.State() != StateWatching || f.CallCount("Stop:") != 0 {
+		t.Fatal("inventory failure interrupted viewing")
+	}
+	f.InventoryErr = nil
+	steps(t, r, 1)
+	if f.CallCount("Heartbeat:") != 2 || f.CallCount("Start:") != 1 {
+		t.Fatal("watch was restarted instead of continued")
 	}
 }
 

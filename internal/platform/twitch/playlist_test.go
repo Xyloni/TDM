@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -156,6 +157,52 @@ func TestWatch_PlaylistHeartbeatHeadsAllChunks(t *testing.T) {
 	require.NoError(t, wt.heartbeat(context.Background(), h))
 	assert.Equal(t, 1, f.masterHits)
 	assert.Len(t, f.heads, 6)
+}
+
+func TestSlowPlaylistDoesNotDelaySpadeBeacon(t *testing.T) {
+	playlistEntered := make(chan struct{})
+	beaconSent := make(chan struct{})
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/playlist":
+			close(playlistEntered)
+			select {
+			case <-release:
+			case <-r.Context().Done():
+			}
+			w.WriteHeader(http.StatusNotFound)
+		case "/spade":
+			close(beaconSent)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := newTestClient(srv.URL)
+	c.homeURL = srv.URL
+	c.hlsHostAllow = func(raw string) bool { return strings.HasPrefix(raw, srv.URL+"/") }
+	wt := &watch{c: c, spadeURLs: map[string]string{"live": srv.URL + "/spade"},
+		playlistURLs: map[string]playlistEntry{"live": {broadcastID: "b", url: srv.URL + "/playlist"}}}
+	done := make(chan error, 1)
+	go func() {
+		done <- wt.heartbeat(context.Background(), platform.WatchHandle{Internal: watchInternal{Channel: "live", BroadcastID: "b"}})
+	}()
+	select {
+	case <-playlistEntered:
+	case <-time.After(3 * time.Second):
+		close(release)
+		t.Fatal("playlist did not start")
+	}
+	select {
+	case <-beaconSent:
+	case <-time.After(3 * time.Second):
+		close(release)
+		t.Fatal("slow playlist blocked minute beacon")
+	}
+	close(release)
+	require.NoError(t, <-done, "a successful beacon must survive a failed playlist")
 }
 
 func TestSendPlaylistWatch_FailsWhenAnyChunkNot200(t *testing.T) {

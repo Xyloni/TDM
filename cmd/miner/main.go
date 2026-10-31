@@ -96,7 +96,7 @@ var setProcessZone = func(l *time.Location) { time.Local = l }
 // run boots the miner and blocks until ctx ends or the HTTP server fails,
 // then shuts down. Runners, background loops and open SSE streams run on a
 // child of ctx that every exit path cancels.
-func run(ctx context.Context) error {
+func run(ctx context.Context) (runErr error) {
 	ctx, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
 	cfg, err := config.Load()
@@ -104,11 +104,24 @@ func run(ctx context.Context) error {
 		return err
 	}
 
+	logPath := filepath.Join(filepath.Dir(cfg.DBPath), "miner.log")
+	logFile, err := mlog.OpenSessionFile(logPath)
+	if err != nil {
+		return fmt.Errorf("open session log: %w", err)
+	}
+	defer logFile.Close()
 	ring := mlog.NewRingFromEnv(1000)
-	logger := mlog.NewWithRing(os.Stdout, cfg.LogLevel, ring)
+	logger := mlog.NewWithSession(os.Stdout, logFile, cfg.LogLevel, ring)
+	previousLogger := slog.Default()
 	slog.SetDefault(logger)
+	defer slog.SetDefault(previousLogger)
+	defer func() {
+		if runErr != nil {
+			logger.Error("miner stopped with error", "err", runErr)
+		}
+	}()
 	startTime := time.Now()
-	logger.Info("miner starting", "log_level", cfg.LogLevel, "http_addr", cfg.HTTPAddr, "db_path", cfg.DBPath, "browser_url", cfg.BrowserURL, "secure_cookies", cfg.SecureCookies)
+	logger.Info("miner starting", "log_level", cfg.LogLevel, "http_addr", cfg.HTTPAddr, "db_path", cfg.DBPath, "log_path", logPath, "browser_url", cfg.BrowserURL, "secure_cookies", cfg.SecureCookies)
 
 	masterKey, keySrc, err := resolveMasterKey(cfg.MasterKey, cfg.DBPath)
 	if err != nil {
@@ -296,7 +309,8 @@ func run(ctx context.Context) error {
 			notify.EventSummary:  dailySummary,
 			notify.EventState:    false,
 			// Manual "send test" always delivers, regardless of toggles.
-			notify.EventTest: true,
+			notify.EventTest:        true,
+			notify.EventGroupSwitch: true,
 		}}
 		globalURL, _ := settingsStore.GlobalDiscordWebhook(ctx)
 		if globalURL == "" {
@@ -624,6 +638,7 @@ func run(ctx context.Context) error {
 		},
 
 		Ring:         ring,
+		LogPath:      logPath,
 		StartTime:    startTime,
 		Commit:       os.Getenv("GIT_COMMIT"),
 		KickSidecars: kickSidecarLister(kickBackend),
@@ -648,7 +663,6 @@ func run(ctx context.Context) error {
 		}
 	})
 
-	var runErr error
 	select {
 	case <-ctx.Done():
 	case runErr = <-srvErr:

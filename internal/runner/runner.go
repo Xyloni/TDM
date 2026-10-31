@@ -686,7 +686,12 @@ func (r *Runner) Run(ctx context.Context) error {
 			r.setState(ctx, StatePicking)
 		}
 		before := r.State()
+		stepStarted := time.Now()
 		err := r.step(ctx)
+		if (before == StateWatching || before == StateForceWatching) && time.Since(stepStarted) >= r.cfg.TickInterval && r.cfg.TickInterval >= time.Minute {
+			slog.Warn("runner tick exceeded heartbeat interval", "kind", "error", "account", r.cfg.AccountID,
+				"elapsed", time.Since(stepStarted), "interval", r.cfg.TickInterval)
+		}
 		after := r.State()
 		switch {
 		case err == nil:

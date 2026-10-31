@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/cookiejar"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -110,6 +111,10 @@ func TestRun_BootsAndServesAPI(t *testing.T) {
 	// srv.Shutdown waits up to 5 s for open requests; the SSE stream must
 	// end with the root ctx well before that.
 	assert.Less(t, time.Since(start), 4*time.Second, "SSE stream held shutdown")
+	logData, err := os.ReadFile(filepath.Join(filepath.Dir(os.Getenv("GRUB_DB_PATH")), "miner.log"))
+	require.NoError(t, err)
+	assert.Contains(t, string(logData), `"msg":"miner starting"`)
+	assert.Contains(t, string(logData), `"msg":"shutting down"`)
 }
 
 // TestGenerateMasterKey_IsAcceptedByCryptor proves the `keygen` subcommand

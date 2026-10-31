@@ -90,6 +90,7 @@ type Deps struct {
 
 	// Health and updates.
 	Ring         *mlog.Ring
+	LogPath      string // full current-session journal; empty falls back to Ring
 	StartTime    time.Time
 	Commit       string
 	KickSidecars func() []string
@@ -109,7 +110,9 @@ type server struct {
 	// canaryRerun asks for one more canary run once the one in flight ends.
 	canaryRerun atomic.Bool
 	// twitch holds the in-flight Twitch device logins, account ID -> *twitchFlow.
-	twitch sync.Map
+	twitch     sync.Map
+	mutationMu sync.Mutex
+	loginMu    sync.Mutex // serializes user lookup and session persistence
 }
 
 func newServer(d Deps) *server {

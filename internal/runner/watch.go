@@ -223,7 +223,9 @@ func (r *Runner) tick(ctx context.Context) error {
 	progress, err := r.cfg.Backend.InventoryProgress(ctx, r.cfg.Session)
 	if err != nil {
 		slog.Error("runner inventory failed", "kind", "error", "account", r.cfg.AccountID, "err", err)
-		return fmt.Errorf("inventory: %w", err)
+		// The watch heartbeat succeeded. A failed progress read is not evidence
+		// the stream stopped; preserve the handle and retry on the next minute.
+		return ctx.Err()
 	}
 	r.mu.Lock()
 	r.lastPollAt = time.Now()

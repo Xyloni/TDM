@@ -184,7 +184,8 @@ func TestSPA_CacheHeaders(t *testing.T) {
 	resp, _ := e.do("GET", "/_app/immutable/entry/app.abc123.js", "", nil)
 	assert.Equal(t, 200, resp.StatusCode)
 	assert.Equal(t, "public, max-age=31536000, immutable", resp.Header.Get("Cache-Control"))
-	assert.True(t, strings.HasPrefix(resp.Header.Get("Content-Type"), "text/javascript"), resp.Header.Get("Content-Type"))
+	contentType := resp.Header.Get("Content-Type")
+	assert.True(t, strings.HasPrefix(contentType, "text/javascript") || strings.HasPrefix(contentType, "application/javascript"), contentType)
 }
 
 func TestRewardsRedirectsToInventory(t *testing.T) {

@@ -661,5 +661,8 @@
   "welcome.continue": "Devam",
   "welcome.start": "Madenciliğe başla",
   "settings.group_wave_size": "Hesap dalgası boyutu",
-  "settings.group_wave_size_sub": "Kuyruk geçişinde sonraki gruptan aynı anda başlatılacak hesap sayısı."
+  "settings.group_wave_size_sub": "Kuyruk geçişinde sonraki gruptan aynı anda başlatılacak hesap sayısı.",
+  "notify.group_switch.title": "Hesap grubu değişti",
+  "notify.group_switch.message": "✅ %d. grup “%s” kampanyasını tamamladı.\n▶️ %d. grup izlemeye devam ediyor.",
+  "notify.group_switch.next_campaign": "✅ %d. grup “%s” kampanyasını tamamladı.\n🔄 Tüm gruplar bu turu tamamladı. %d. grup sonraki kampanyayı seçiyor."
 }

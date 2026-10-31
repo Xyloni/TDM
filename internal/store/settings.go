@@ -64,6 +64,32 @@ type AccountGroupQueue struct {
 	CampaignID string         `json:"campaign_id"`
 }
 
+type AccountGroupAssignment struct {
+	AccountID string
+	Group     int
+}
+
+// AddAccountGroups applies an import in file order with one settings write.
+// Validation workers may finish in any order; the first file group still starts first.
+func (s *Settings) AddAccountGroups(ctx context.Context, assignments []AccountGroupAssignment) error {
+	s.queueMu.Lock()
+	defer s.queueMu.Unlock()
+	state, err := s.accountGroupsQueue(ctx)
+	if err != nil {
+		return err
+	}
+	for _, a := range assignments {
+		if a.Group < 1 || a.Group > 10000 || a.AccountID == "" {
+			return fmt.Errorf("invalid account group assignment")
+		}
+		state.Groups[a.AccountID] = a.Group
+		if state.Active == 0 {
+			state.Active = a.Group
+		}
+	}
+	return s.saveAccountGroupsQueue(ctx, state)
+}
+
 // AccountGroupsQueue reads group membership and the currently active group.
 func (s *Settings) AccountGroupsQueue(ctx context.Context) (AccountGroupQueue, error) {
 	s.queueMu.Lock()

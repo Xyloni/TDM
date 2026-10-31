@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -31,7 +32,10 @@ func TestResolveMasterKey_GeneratesOnceThenReuses(t *testing.T) {
 
 	info, err := os.Stat(filepath.Join(dir, masterKeyFile))
 	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	// Windows uses ACLs and does not expose POSIX permission bits.
+	if runtime.GOOS != "windows" {
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	}
 
 	again, src, err := resolveMasterKey("  ", filepath.Join(dir, "miner.db"))
 	require.NoError(t, err)

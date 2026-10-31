@@ -20,6 +20,8 @@ const (
 	// EventSummary is the daily summary sent at local midnight. The fields
 	// carry day, minutes, claims plus a localized title and msg.
 	EventSummary Event = "summary"
+	// EventGroupSwitch reports a committed account-group handoff to Telegram.
+	EventGroupSwitch Event = "group_switch"
 )
 
 type Notifier interface {

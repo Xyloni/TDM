@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -22,6 +23,21 @@ import (
 	"github.com/aalejandrofer/grubdrops/internal/store"
 	"github.com/aalejandrofer/grubdrops/internal/store/gen"
 )
+
+func TestHealthLogDownloadsEntireSessionFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "miner.log")
+	full := strings.Repeat("heartbeat account=a1\n", 2000)
+	require.NoError(t, os.WriteFile(path, []byte(full), 0o600))
+	e := newHealthEnv(t, func(d *Deps) {
+		d.LogPath = path
+		d.Ring = mlog.NewRing(1)
+		d.Ring.PushEvent(mlog.KindInfo, "INFO", "ring only", nil)
+	})
+	resp, data := e.do("GET", "/api/health/log", "", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, full, string(data))
+	assert.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
+}
 
 // newHealthEnv builds an authenticated env (auth bypass) with the health
 // routes mounted and Deps adjusted by mut.

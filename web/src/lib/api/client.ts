@@ -93,6 +93,8 @@ export interface Api {
 	renameAccount(id: string, name: string): Promise<void>;
 	setAccountOrder(ids: string[]): Promise<void>;
 	removeAccount(id: string): Promise<void>;
+	removeAllAccounts(): Promise<void>;
+	twitchBatchLogin(accounts: { url: string; group?: number }[]): Promise<{ results: boolean[] }>;
 	setAccountEnabled(id: string, enabled: boolean): Promise<void>;
 	twitchStart(id: string): Promise<DeviceStart>;
 	twitchStatus(id: string): Promise<DeviceStatus>;
@@ -258,6 +260,8 @@ export function createClient(opts: ClientOpts): Api {
 		renameAccount: (id, name) => send('PATCH', `/api/accounts/${enc(id)}`, { name }) as Promise<void>,
 		setAccountOrder: (ids) => send('PUT', '/api/accounts/order', { ids }) as Promise<void>,
 		removeAccount: (id) => send('DELETE', `/api/accounts/${enc(id)}`) as Promise<void>,
+		removeAllAccounts: () => send('DELETE', '/api/accounts') as Promise<void>,
+		twitchBatchLogin: (accounts) => post('/api/login/twitch/batch', { accounts }),
 		setAccountEnabled: (id, enabled) =>
 			send('PUT', `/api/accounts/${enc(id)}/enabled`, { enabled }) as Promise<void>,
 		twitchStart: (id) => post(`/api/accounts/${enc(id)}/twitch/device`),

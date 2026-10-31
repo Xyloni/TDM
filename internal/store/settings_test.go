@@ -119,6 +119,21 @@ func TestSettings_AccountGroupQueue(t *testing.T) {
 	assert.Equal(t, 2, state.Active)
 }
 
+func TestSettingsImportedGroupsKeepFileOrder(t *testing.T) {
+	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "batch-groups.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	s := NewSettings(gen.New(db))
+	ctx := context.Background()
+	require.NoError(t, s.AddAccountGroups(ctx, []AccountGroupAssignment{
+		{AccountID: "first", Group: 2}, {AccountID: "second", Group: 1},
+	}))
+	state, err := s.AccountGroupsQueue(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 2, state.Active, "first file group starts, regardless of validation completion order")
+	assert.Equal(t, map[string]int{"first": 2, "second": 1}, state.Groups)
+}
+
 func TestSettings_KickWatchMode(t *testing.T) {
 	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "t.db"))
 	require.NoError(t, err)

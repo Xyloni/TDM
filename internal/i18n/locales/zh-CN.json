@@ -661,5 +661,8 @@
   "welcome.continue": "继续",
   "welcome.start": "开始挖取",
   "settings.group_wave_size": "账号波次大小",
-  "settings.group_wave_size_sub": "队列切换时，下一组每次同时启动的账号数量。"
+  "settings.group_wave_size_sub": "队列切换时，下一组每次同时启动的账号数量。",
+  "notify.group_switch.title": "账号组已切换",
+  "notify.group_switch.message": "✅ 第 %d 组已完成活动“%s”的挖矿。\n▶️ 第 %d 组继续挖矿。",
+  "notify.group_switch.next_campaign": "✅ 第 %d 组已完成活动“%s”的挖矿。\n🔄 所有组已完成本轮任务。第 %d 组正在选择下一个活动。"
 }

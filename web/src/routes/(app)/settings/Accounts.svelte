@@ -198,17 +198,13 @@
 		removingAll = true;
 		removeAllConfirm = false;
 		removeAllError = '';
-		let failed = 0;
-		for (const account of [...listed]) {
-			try {
-				await api.removeAccount(account.id);
-			} catch {
-				failed++;
-			}
+		try {
+			await api.removeAllAccounts();
+		} catch {
+			removeAllError = t('accounts.remove_all_failed', { n: listed.length });
 		}
 		await live.refetchAll().catch(() => {});
 		removingAll = false;
-		if (failed) removeAllError = t('accounts.remove_all_failed', { n: failed });
 	}
 
 	async function setEnabled(a: Account, enabled: boolean): Promise<void> {

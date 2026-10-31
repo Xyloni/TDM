@@ -226,6 +226,33 @@ func TestClient_HostAllowedForBeacon(t *testing.T) {
 	assert.False(t, c.hostAllowedForBeacon("https://evil.example.com/spade"))
 	assert.False(t, c.hostAllowedForBeacon("https://nottwitch.tv.evil.com/spade"))
 	assert.False(t, c.hostAllowedForBeacon("https://faketwitch.tv/spade"))
+	assert.False(t, c.hostAllowedForBeacon("http://spade.twitch.tv/spade"), "OAuth must not travel over plaintext HTTP")
+	assert.False(t, c.hostAllowedForBeacon("http://127.0.0.1:9998/spade"), "test allowance must not allow other ports")
+}
+
+func TestPinnedRequestsRejectRedirectBeforeContact(t *testing.T) {
+	hits := 0
+	destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer destination.Close()
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, destination.URL+"/private", http.StatusTemporaryRedirect)
+	}))
+	defer source.Close()
+	c := newTestClient(source.URL)
+	c.homeURL = source.URL
+	c.hlsHostAllow = func(raw string) bool { return strings.HasPrefix(raw, source.URL+"/") }
+	_, err := c.fetchHLS(context.Background(), "secret", source.URL+"/playlist")
+	require.Error(t, err)
+	err = c.headHLS(context.Background(), "secret", source.URL+"/chunk")
+	require.Error(t, err)
+	err = c.sendSpadeBeacon(context.Background(), "secret", source.URL+"/beacon", []byte("[]"))
+	require.Error(t, err)
+	_, err = c.fetchText(context.Background(), "secret", source.URL+"/settings")
+	require.Error(t, err)
+	assert.Zero(t, hits, "redirect targets must not receive requests or credentials")
 }
 
 func TestIntegrity_LogsNoToken(t *testing.T) {

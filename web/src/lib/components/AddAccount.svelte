@@ -45,6 +45,8 @@
 			const lines = (await file.text()).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
 			if (!lines.length) throw new Error('empty');
 			let currentGroup: number | undefined;
+			const accounts: { url: string; group?: number }[] = [];
+			const sourceLines: number[] = [];
 			for (let i = 0; i < lines.length; i++) {
 				const line = lines[i];
 				const header = /^(\d+):$/.exec(line);
@@ -70,12 +72,15 @@
 					fileErrors.push(t('accounts.accountfile_invalid', { n: i + 1 }));
 					continue;
 				}
-				try {
-					await api.twitchAndroidLogin(token, undefined, group);
-					fileCount++;
-				} catch {
-					fileErrors.push(t('accounts.accountfile_rejected', { n: i + 1 }));
-				}
+				accounts.push({ url: token, group });
+				sourceLines.push(i + 1);
+			}
+			if (accounts.length) {
+				const { results } = await api.twitchBatchLogin(accounts);
+				results.forEach((ok, i) => {
+					if (ok) fileCount++;
+					else fileErrors.push(t('accounts.accountfile_rejected', { n: sourceLines[i] }));
+				});
 			}
 			if (fileCount) onadded?.();
 			if (!fileCount && !fileErrors.length) fileMessage = t('accounts.accountfile_none');

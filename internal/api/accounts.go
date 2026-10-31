@@ -22,21 +22,23 @@ import (
 
 func (s *server) routesAccounts(r chi.Router) {
 	r.Get("/accounts", s.listAccounts)
-	r.Post("/accounts", s.createAccount)
+	r.With(s.accountMutation).Post("/accounts", s.createAccount)
+	r.With(s.accountMutation).Delete("/accounts", s.deleteAllAccounts)
 	r.Put("/accounts/order", s.putAccountsOrder)
 	r.Patch("/accounts/{id}", s.renameAccount)
-	r.Delete("/accounts/{id}", s.deleteAccount)
+	r.With(s.accountMutation).Delete("/accounts/{id}", s.deleteAccount)
 	r.Put("/accounts/{id}/enabled", s.setAccountEnabled)
-	r.Post("/accounts/{id}/twitch/device", s.twitchDeviceStart)
+	r.With(s.accountMutation).Post("/accounts/{id}/twitch/device", s.twitchDeviceStart)
 	r.Get("/accounts/{id}/twitch/device", s.twitchDeviceStatus)
-	r.Post("/accounts/{id}/kick/session", s.kickSession)
+	r.With(s.accountMutation).Post("/accounts/{id}/kick/session", s.kickSession)
 	r.Post("/accounts/{id}/recheck-links", s.postAccountRecheckLinks)
 	r.Post("/accounts/{id}/check-login", s.postAccountCheckLogin)
 	r.Post("/accounts/{id}/restart", s.postAccountRestart)
 	r.Get("/accounts/{id}/games", s.getAccountGames)
 	r.Put("/accounts/{id}/games", s.putAccountGames)
 	r.Get("/login/twitch/android", s.twitchAndroidURL)
-	r.Post("/login/twitch/android", s.twitchAndroidLogin)
+	r.With(s.accountMutation).Post("/login/twitch/android", s.twitchAndroidLogin)
+	r.With(s.accountMutation).Post("/login/twitch/batch", s.twitchBatchLogin)
 }
 
 type accountAuthJSON struct {
@@ -512,6 +514,23 @@ func (s *server) purgeAccount(ctx context.Context, id string) error {
 	defer tx.Rollback() //nolint:errcheck // no-op once Commit succeeds
 	qtx := s.d.Q.WithTx(tx)
 
+	for _, stmt := range []string{
+		"DELETE FROM account_channels WHERE account_id = ?",
+		"DELETE FROM account_force_channels WHERE account_id = ?",
+		"DELETE FROM drop_states WHERE account_id = ?",
+		"DELETE FROM account_scans WHERE account_id = ?",
+		"DELETE FROM notifications WHERE account_id = ?",
+	} {
+		if _, err := tx.ExecContext(ctx, stmt, id); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM kv WHERE key = ?", authcheck.Prefix+id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM kv WHERE (substr(key,1,14) = 'skip_override:' OR substr(key,1,12) = 'link_notice:') AND substr(key,-length(?)) = ?", ":"+id, ":"+id); err != nil {
+		return err
+	}
 	if err := qtx.DeleteAccountSession(ctx, id); err != nil {
 		return err
 	}

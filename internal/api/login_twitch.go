@@ -112,6 +112,18 @@ func (s *server) pollTwitch(ctx context.Context, id string, backend platform.Bac
 		if ctx.Err() != nil { // superseded or account deleted: store nothing
 			return
 		}
+		s.mutationMu.Lock()
+		defer s.mutationMu.Unlock()
+		if ctx.Err() != nil {
+			return
+		}
+		if p, ok := s.d.Pool.(interface{ Pause() func() }); ok {
+			resume := p.Pause()
+			defer resume()
+		}
+		if ctx.Err() != nil {
+			return
+		}
 		if err := s.d.Sessions.Put(ctx, id, sess); err != nil {
 			slog.Error("persist twitch session failed", "kind", "error", "account", id, "err", err)
 			fl.set("error")

@@ -133,8 +133,14 @@ func (w *watch) heartbeat(ctx context.Context, h platform.WatchHandle) error {
 		return fmt.Errorf("invalid watch handle")
 	}
 
-	playErr := w.playlistHeartbeat(ctx, internal)
+	// A slow CDN must not delay the independent minute beacon. Bound the
+	// whole watch operation so retries cannot consume several minute ticks.
+	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	defer cancel()
+	playDone := make(chan error, 1)
+	go func() { playDone <- w.playlistHeartbeat(ctx, internal) }()
 	spadeErr := w.spadeHeartbeat(ctx, internal)
+	playErr := <-playDone
 
 	switch {
 	case playErr == nil && spadeErr == nil:

@@ -470,6 +470,7 @@ func (ro *roster) reloadAccount(id string) {
 func (ro *roster) accountRemoved(id string) {
 	ro.names.remove(id)
 	ro.loaded.remove(id)
+	ro.fallbackLog.reset(id)
 	ro.pool.ReloadAccount(id, nil)
 	ro.collector.Forget(id)
 	ro.hub.Publish(api.Event{Name: api.EventAccounts, Data: struct{}{}})

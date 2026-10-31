@@ -134,7 +134,7 @@ func (c *client) fetchHLS(ctx context.Context, oauthToken, rawURL string) ([]byt
 	}
 	c.setHLSHeaders(req, oauthToken)
 	req.Close = true
-	resp, err := c.http.Do(req)
+	resp, err := c.doPinned(req, c.hostAllowedForHLS)
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +178,7 @@ func (c *client) headHLS(ctx context.Context, oauthToken, rawURL string) error {
 		return err
 	}
 	c.setHLSHeaders(req, oauthToken)
-	resp, err := c.http.Do(req)
+	resp, err := c.doPinned(req, c.hostAllowedForHLS)
 	if err != nil {
 		return err
 	}

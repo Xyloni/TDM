@@ -37,6 +37,41 @@ func blockBuilder(id string, starts *int32) (Builder, *blockUnit) {
 	return func() Entry { return Entry{ID: id, Unit: u} }, u
 }
 
+func TestPoolPauseDrainsAndQueuesReloads(t *testing.T) {
+	p := NewPool(nil)
+	defer p.Stop()
+	var starts, replacements int32
+	b, old := blockBuilder("a", &starts)
+	if err := p.Reload(context.Background(), []Builder{b}); err != nil {
+		t.Fatal(err)
+	}
+	resume := p.Pause()
+	if old.running.Load() {
+		t.Fatal("Pause returned before worker exited")
+	}
+	if len(p.Snapshots()) != 0 {
+		t.Fatal("paused roster should have no running workers")
+	}
+	b2, next := blockBuilder("b", &replacements)
+	p.ReloadAccount("a", nil)
+	p.ReloadAccount("b", b2)
+	if next.running.Load() {
+		t.Fatal("reload started during maintenance")
+	}
+	resume()
+	resume() // safe to defer after explicit resume
+	deadline := time.Now().Add(time.Second)
+	for !next.running.Load() && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !next.running.Load() || atomic.LoadInt32(&replacements) != 1 {
+		t.Fatal("replacement did not resume exactly once")
+	}
+	if old.running.Load() {
+		t.Fatal("deleted worker was resurrected")
+	}
+}
+
 func TestPool_ReloadWithCancelledParentKeepsUnits(t *testing.T) {
 	p := NewPool(nil)
 	defer p.Stop()

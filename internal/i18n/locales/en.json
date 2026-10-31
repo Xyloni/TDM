@@ -661,5 +661,8 @@
   "welcome.continue": "Continue",
   "welcome.start": "Start mining",
   "settings.group_wave_size": "Account wave size",
-  "settings.group_wave_size_sub": "How many accounts in the next group to start at once during a queue transition."
+  "settings.group_wave_size_sub": "How many accounts in the next group to start at once during a queue transition.",
+  "notify.group_switch.title": "Account group changed",
+  "notify.group_switch.message": "✅ Group %d finished farming campaign “%s”.\n▶️ Group %d continues farming.",
+  "notify.group_switch.next_campaign": "✅ Group %d finished farming campaign “%s”.\n🔄 All groups finished this round. Group %d is selecting the next campaign."
 }

@@ -661,5 +661,8 @@
   "welcome.continue": "Continuar",
   "welcome.start": "Empezar a minar",
   "settings.group_wave_size": "Tamaño de la ola de cuentas",
-  "settings.group_wave_size_sub": "Cuántas cuentas del siguiente grupo iniciar a la vez al cambiar de grupo."
+  "settings.group_wave_size_sub": "Cuántas cuentas del siguiente grupo iniciar a la vez al cambiar de grupo.",
+  "notify.group_switch.title": "Cambio de grupo de cuentas",
+  "notify.group_switch.message": "✅ El grupo %d terminó la campaña «%s».\n▶️ El grupo %d continúa farmeando.",
+  "notify.group_switch.next_campaign": "✅ El grupo %d terminó la campaña «%s».\n🔄 Todos los grupos terminaron la ronda. El grupo %d está eligiendo la siguiente campaña."
 }

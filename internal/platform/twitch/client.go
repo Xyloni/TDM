@@ -451,7 +451,7 @@ func (c *client) resolveSpadeURL(ctx context.Context, token, channel string) (st
 		return "", err
 	}
 	c.setCommonHeaders(req, token)
-	resp, err := c.http.Do(req)
+	resp, err := c.doPinned(req, c.hostAllowedForBeacon)
 	if err != nil {
 		return "", err
 	}
@@ -505,19 +505,41 @@ func (c *client) hostAllowedForBeacon(rawURL string) bool {
 	if err != nil {
 		return false
 	}
-	h := u.Hostname()
+	h := strings.ToLower(u.Hostname())
 	if h == "" {
 		return false
 	}
-	if h == "twitch.tv" || strings.HasSuffix(h, ".twitch.tv") {
+	if u.Scheme == "https" && u.User == nil && (h == "twitch.tv" || strings.HasSuffix(h, ".twitch.tv")) {
 		return true
 	}
 	// Test escape hatch: the scraper is pointed at homeURL (an httptest
 	// server) whose spade/settings URLs share that same host.
-	if hu, err := url.Parse(c.homeURL); err == nil && hu.Hostname() != "" && hu.Hostname() == h {
+	if hu, err := url.Parse(c.homeURL); err == nil && hu.Hostname() != "" && hu.Scheme == "http" && u.Scheme == "http" && hu.Host == u.Host && (h == "127.0.0.1" || h == "localhost" || h == "::1") {
 		return true
 	}
 	return false
+}
+
+// doPinned checks redirect destinations as well as the initial scraped URL.
+// Clone the client so concurrent GQL calls keep their redirect policy.
+func (c *client) doPinned(req *http.Request, allowed func(string) bool) (*http.Response, error) {
+	if !allowed(req.URL.String()) {
+		return nil, fmt.Errorf("request host not allowed")
+	}
+	hc := *c.http
+	hc.CheckRedirect = func(next *http.Request, via []*http.Request) error {
+		if !allowed(next.URL.String()) {
+			return fmt.Errorf("redirect host not allowed")
+		}
+		if len(via) >= 10 {
+			return fmt.Errorf("too many redirects")
+		}
+		if c.http.CheckRedirect != nil {
+			return c.http.CheckRedirect(next, via)
+		}
+		return nil
+	}
+	return hc.Do(req)
 }
 
 // fetchText GETs url with the common Twitch headers and returns the
@@ -529,7 +551,7 @@ func (c *client) fetchText(ctx context.Context, token, url string) ([]byte, erro
 		return nil, err
 	}
 	c.setCommonHeaders(req, token)
-	resp, err := c.http.Do(req)
+	resp, err := c.doPinned(req, c.hostAllowedForBeacon)
 	if err != nil {
 		return nil, err
 	}
@@ -552,7 +574,7 @@ func (c *client) sendSpadeBeacon(ctx context.Context, token, spadeURL string, ev
 	}
 	c.setCommonHeaders(req, token)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := c.http.Do(req)
+	resp, err := c.doPinned(req, c.hostAllowedForBeacon)
 	if err != nil {
 		return err
 	}

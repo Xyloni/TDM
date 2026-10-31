@@ -43,6 +43,10 @@ func (s *server) twitchAndroidLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request")
 		return
 	}
+	if body.Group > 0 && s.d.Settings == nil {
+		writeErr(w, http.StatusServiceUnavailable, "unavailable")
+		return
+	}
 	raw := body.URL
 	if body.Jar != "" {
 		b, err := base64.StdEncoding.DecodeString(body.Jar)
@@ -92,6 +96,13 @@ func (s *server) twitchAndroidLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	created := false
+	s.loginMu.Lock()
+	locked := true
+	defer func() {
+		if locked {
+			s.loginMu.Unlock()
+		}
+	}()
 	if id == "" {
 		id = s.twitchAccountForUser(ctx, sess.UserID)
 	}
@@ -119,7 +130,7 @@ func (s *server) twitchAndroidLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal")
 		return
 	}
-	if body.Group > 0 {
+	if body.Group > 0 && ctx.Value(batchUsersKey{}) == nil {
 		if s.d.Settings == nil {
 			writeErr(w, http.StatusServiceUnavailable, "unavailable")
 			return
@@ -130,6 +141,11 @@ func (s *server) twitchAndroidLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if users, ok := ctx.Value(batchUsersKey{}).(batchUsers); ok && sess.UserID != "" {
+		users[sess.UserID] = id
+	}
+	s.loginMu.Unlock()
+	locked = false
 	slog.Info("twitch android login stored", "kind", "auth", "account", id, "platform", "twitch", "created", created)
 	sess.AccountID = id
 	fetchAndStoreAvatar(ctx, s.d.Q, backend, id, sess)
@@ -144,6 +160,9 @@ func (s *server) twitchAndroidLogin(w http.ResponseWriter, r *http.Request) {
 // twitchAccountForUser returns the Twitch account whose stored session
 // belongs to userID, or "" when none does.
 func (s *server) twitchAccountForUser(ctx context.Context, userID string) string {
+	if users, ok := ctx.Value(batchUsersKey{}).(batchUsers); ok {
+		return users[userID]
+	}
 	if userID == "" {
 		return ""
 	}

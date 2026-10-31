@@ -53,6 +53,9 @@ func (t *TelegramBot) Notify(ctx context.Context, event Event, fields map[string
 		return nil
 	}
 	text := buildTelegramText(event, fields)
+	if event == EventGroupSwitch {
+		return t.sendPinnedMessage(ctx, text)
+	}
 	if img, _ := fields["image"].(string); img != "" && validImageURL(img) && len([]rune(text)) <= telegramCaptionLimit {
 		err := t.send(ctx, "sendPhoto", map[string]any{
 			"chat_id":    t.ChatID,
@@ -91,8 +94,9 @@ func (e *telegramAPIError) Error() string {
 }
 
 type telegramResp struct {
-	OK          bool   `json:"ok"`
-	Description string `json:"description"`
+	OK          bool            `json:"ok"`
+	Description string          `json:"description"`
+	Result      json.RawMessage `json:"result"`
 	Parameters  struct {
 		RetryAfter int `json:"retry_after"`
 	} `json:"parameters"`
@@ -101,17 +105,42 @@ type telegramResp struct {
 // send posts one Bot API call. A 429 waits retry_after (capped) and retries
 // once. Errors never carry the token.
 func (t *TelegramBot) send(ctx context.Context, method string, payload map[string]any) error {
-	body, err := json.Marshal(payload)
+	_, err := t.call(ctx, method, payload)
+	return err
+}
+
+func (t *TelegramBot) sendPinnedMessage(ctx context.Context, text string) error {
+	response, err := t.call(ctx, "sendMessage", map[string]any{
+		"chat_id": t.ChatID, "text": text, "parse_mode": "HTML",
+		"disable_web_page_preview": true,
+	})
 	if err != nil {
 		return err
+	}
+	var message struct {
+		ID int64 `json:"message_id"`
+	}
+	if err := json.Unmarshal(response.Result, &message); err != nil || message.ID <= 0 {
+		return errors.New("telegram sendMessage: message sent but no message_id returned for pinning")
+	}
+	// A failed pin must not cause the already-delivered message to be resent.
+	return t.send(ctx, "pinChatMessage", map[string]any{
+		"chat_id": t.ChatID, "message_id": message.ID, "disable_notification": true,
+	})
+}
+
+func (t *TelegramBot) call(ctx context.Context, method string, payload map[string]any) (telegramResp, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return telegramResp{}, err
 	}
 	for attempt := 0; ; attempt++ {
 		status, tr, err := t.post(ctx, method, body)
 		if err != nil {
-			return t.redact(err)
+			return tr, t.redact(err)
 		}
-		if status < 300 {
-			return nil
+		if status < 300 && tr.OK {
+			return tr, nil
 		}
 		if status == http.StatusTooManyRequests && attempt == 0 {
 			wait := time.Duration(tr.Parameters.RetryAfter) * time.Second
@@ -119,18 +148,18 @@ func (t *TelegramBot) send(ctx context.Context, method string, payload map[strin
 				wait = time.Second
 			}
 			if wait > maxTelegramRetryWait {
-				return &telegramAPIError{method: method, status: status, desc: t.redactString(tr.Description)}
+				return tr, &telegramAPIError{method: method, status: status, desc: t.redactString(tr.Description)}
 			}
 			timer := time.NewTimer(wait)
 			select {
 			case <-ctx.Done():
 				timer.Stop()
-				return ctx.Err()
+				return tr, ctx.Err()
 			case <-timer.C:
 			}
 			continue
 		}
-		return &telegramAPIError{method: method, status: status, desc: t.redactString(tr.Description)}
+		return tr, &telegramAPIError{method: method, status: status, desc: t.redactString(tr.Description)}
 	}
 }
 
@@ -253,7 +282,7 @@ func buildTelegramText(event Event, fields map[string]any) string {
 		return b.String()
 	}
 
-	if event == EventSummary {
+	if event == EventSummary || event == EventGroupSwitch {
 		title := str("title")
 		if title == "" {
 			title = titleFor(event)

@@ -72,6 +72,13 @@ type Pool struct {
 	baseCtx    context.Context
 	baseCancel context.CancelFunc
 	orders     map[string][]string
+	paused     bool // guarded by reloadMu
+	pending    []pendingUnit
+}
+
+type pendingUnit struct {
+	id    string
+	build Builder
 }
 
 func NewPool(n Notifier) *Pool {
@@ -191,6 +198,10 @@ func (p *Pool) notifyErr(f map[string]any) {
 func (p *Pool) Reload(parent context.Context, builders []Builder) error {
 	p.reloadMu.Lock()
 	defer p.reloadMu.Unlock()
+	return p.reload(parent, builders)
+}
+
+func (p *Pool) reload(parent context.Context, builders []Builder) error {
 	base := p.base(parent)
 
 	entries, old := p.buildAll(builders)
@@ -199,6 +210,17 @@ func (p *Pool) Reload(parent context.Context, builders []Builder) error {
 	}
 	for _, u := range old {
 		release(u.current())
+	}
+	if p.paused {
+		p.pending = nil
+		for i, e := range entries {
+			p.pending = append(p.pending, pendingUnit{e.ID, builders[i]})
+			release(e)
+		}
+		p.mu.Lock()
+		p.units = nil
+		p.mu.Unlock()
+		return nil
 	}
 
 	units := make([]*poolUnit, 0, len(entries))
@@ -267,6 +289,18 @@ func release(e Entry) {
 func (p *Pool) ReloadAccount(id string, b Builder) {
 	p.reloadMu.Lock()
 	defer p.reloadMu.Unlock()
+	if p.paused {
+		idx := slices.IndexFunc(p.pending, func(u pendingUnit) bool { return u.id == id })
+		if idx >= 0 {
+			p.pending = slices.Delete(p.pending, idx, idx+1)
+		}
+		if b != nil {
+			p.pending = append(p.pending, pendingUnit{id, b})
+		} else {
+			p.ResetOrder(id)
+		}
+		return
+	}
 
 	p.mu.Lock()
 	base := p.baseCtx
@@ -315,9 +349,52 @@ func (p *Pool) Stop() {
 	}
 	for _, u := range old {
 		<-u.done
+		release(u.current())
 	}
+	p.pending = nil
 	if cancel != nil {
 		cancel()
+	}
+}
+
+// Pause drains all workers before returning. Reload requests are queued until
+// the returned resume function runs. Callers must serialize maintenance jobs.
+func (p *Pool) Pause() func() {
+	p.reloadMu.Lock()
+	p.paused = true
+	p.mu.Lock()
+	old := p.units
+	p.units = nil
+	base := p.baseCtx
+	p.mu.Unlock()
+	for _, u := range old {
+		p.pending = append(p.pending, pendingUnit{u.current().ID, u.build})
+		u.cancel()
+	}
+	for _, u := range old {
+		<-u.done
+		release(u.current())
+	}
+	p.reloadMu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			p.reloadMu.Lock()
+			defer p.reloadMu.Unlock()
+			p.paused = false
+			pending := p.pending
+			p.pending = nil
+			if base == nil || base.Err() != nil {
+				return
+			}
+			builders := make([]Builder, 0, len(pending))
+			for _, u := range pending {
+				if u.build != nil {
+					builders = append(builders, u.build)
+				}
+			}
+			_ = p.reload(base, builders)
+		})
 	}
 }
 

@@ -3,8 +3,10 @@ package api
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -182,8 +184,27 @@ func (s *server) getHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// getHealthLog downloads every ring line as plain text.
+// getHealthLog streams a fixed-size snapshot of the current session journal.
+// A growing file cannot prolong the download or fill server memory.
 func (s *server) getHealthLog(w http.ResponseWriter, _ *http.Request) {
+	if s.d.LogPath != "" {
+		f, err := os.Open(s.d.LogPath)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "internal")
+			return
+		}
+		defer f.Close()
+		info, err := f.Stat()
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "internal")
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Content-Disposition", `attachment; filename="grubdrops-log.txt"`)
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = io.Copy(w, io.NewSectionReader(f, 0, info.Size()))
+		return
+	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="grubdrops-log.txt"`)
 	w.WriteHeader(http.StatusOK)

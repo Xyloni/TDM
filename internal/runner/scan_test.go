@@ -138,8 +138,8 @@ func TestRunner_OnProgressAfterPoll(t *testing.T) {
 	f.Mu.Lock()
 	f.InventoryErr = errors.New("down")
 	f.Mu.Unlock()
-	if err := r.step(context.Background()); err == nil {
-		t.Fatal("want inventory error")
+	if err := r.step(context.Background()); err != nil {
+		t.Fatalf("inventory failure should preserve the watch: %v", err)
 	}
 	if len(h.progress) != 1 {
 		t.Fatalf("progress=%d", len(h.progress))

@@ -77,6 +77,51 @@ func TestTelegram_SendMessageFormat(t *testing.T) {
 	}, "\n"), b["text"])
 }
 
+func TestTelegramGroupSwitchSendsAndPinsOnlyItsOwnMessage(t *testing.T) {
+	srv, calls := tgServer(t, func(n int, w http.ResponseWriter) {
+		if n == 1 {
+			_, _ = io.WriteString(w, `{"ok":true,"result":{"message_id":456}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"ok":true,"result":true}`)
+	})
+	bot := newTestBot(srv.URL, &VerbosityFilter{Allow: map[string]bool{EventGroupSwitch: true}})
+	require.NoError(t, bot.Notify(context.Background(), EventGroupSwitch, map[string]any{
+		"title": "Смена группы", "msg": "Группа 1 завершила <кампанию>. Группа 2 начала фарм.",
+	}))
+	got := calls()
+	require.Len(t, got, 2)
+	assert.True(t, strings.HasSuffix(got[0].path, "/sendMessage"))
+	assert.Equal(t, "<b>Смена группы</b>\nГруппа 1 завершила &lt;кампанию&gt;. Группа 2 начала фарм.", got[0].body["text"])
+	assert.True(t, strings.HasSuffix(got[1].path, "/pinChatMessage"))
+	assert.Equal(t, got[0].body["chat_id"], got[1].body["chat_id"])
+	assert.Equal(t, float64(456), got[1].body["message_id"])
+	assert.Equal(t, true, got[1].body["disable_notification"])
+}
+
+func TestTelegramGroupPinFailureDoesNotResendMessage(t *testing.T) {
+	srv, calls := tgServer(t, func(n int, w http.ResponseWriter) {
+		if n == 1 {
+			_, _ = io.WriteString(w, `{"ok":true,"result":{"message_id":789}}`)
+			return
+		}
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, `{"ok":false,"description":"not enough rights to pin"}`)
+	})
+	err := newTestBot(srv.URL, nil).Notify(context.Background(), EventGroupSwitch, map[string]any{"title": "Group changed"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "pinChatMessage")
+	assert.NotContains(t, err.Error(), testToken)
+	assert.Len(t, calls(), 2, "pin failure must not resend the delivered notification")
+}
+
+func TestTelegramGroupSwitchDoesNotPinMissingMessageID(t *testing.T) {
+	srv, calls := tgServer(t, okHandler)
+	err := newTestBot(srv.URL, nil).Notify(context.Background(), EventGroupSwitch, nil)
+	require.ErrorContains(t, err, "message_id")
+	assert.Len(t, calls(), 1)
+}
+
 func TestTelegram_EscapesOutsideText(t *testing.T) {
 	srv, calls := tgServer(t, okHandler)
 	bot := newTestBot(srv.URL, nil)

@@ -1,9 +1,14 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/aalejandrofer/grubdrops/internal/api"
+	"github.com/aalejandrofer/grubdrops/internal/i18n"
+	"github.com/aalejandrofer/grubdrops/internal/notify"
 	"github.com/aalejandrofer/grubdrops/internal/plan"
 	"github.com/aalejandrofer/grubdrops/internal/runner"
 	"github.com/aalejandrofer/grubdrops/internal/store/gen"
@@ -118,6 +123,40 @@ func (ro *roster) checkAccountGroupQueue() {
 	}
 	if ro.hub != nil {
 		ro.hub.Publish(api.Event{Name: api.EventAccounts, Data: struct{}{}})
+	}
+	ro.notifyAccountGroupSwitch(previous, next.Active, focus, next.CampaignID == "")
+}
+
+// Notify only after the persisted handoff and worker reloads. Delivery/pinning
+// failures are reported without rolling back the queue or interrupting miners.
+func (ro *roster) notifyAccountGroupSwitch(previous, next int, campaignID string, nextCampaign bool) {
+	if ro.notifier == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ro.ctx, 35*time.Second)
+	defer cancel()
+	lang := "ru"
+	if ro.settings != nil {
+		if configured, err := ro.settings.UILanguage(ctx); err == nil {
+			lang = configured
+		}
+	}
+	campaign := campaignID
+	if c, err := ro.q.GetCampaign(ctx, campaignID); err == nil && c.Name != "" {
+		campaign = c.Name
+	}
+	message := i18n.T(lang, "notify.group_switch.message")
+	if nextCampaign {
+		message = i18n.T(lang, "notify.group_switch.next_campaign")
+	}
+	fields := map[string]any{
+		"title": i18n.T(lang, "notify.group_switch.title"),
+		"msg":   fmt.Sprintf(message, previous, campaign, next),
+	}
+	err := ro.notifier.Notify(notify.WithTarget(ctx, notify.TargetTelegram), notify.EventGroupSwitch, fields)
+	if err != nil && !errors.Is(err, notify.ErrNoTarget) {
+		ro.log().Warn("account group Telegram notification or pin failed", "kind", "error",
+			"from_group", previous, "to_group", next, "err", err)
 	}
 }
 
