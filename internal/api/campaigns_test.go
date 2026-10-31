@@ -23,6 +23,27 @@ func newCampaignsEnv(t *testing.T) *gamesEnv {
 	return g
 }
 
+func TestExcludeDropWithoutAccountsAndRestore(t *testing.T) {
+	g := newCampaignsEnv(t)
+	c := platform.Campaign{ID: "c1", Platform: "twitch", Game: "Rust", Name: "Badges", Status: "active", Benefits: []platform.DropBenefit{{ID: "badge", Name: "Badge", RequiredMinutes: 15}}}
+	g.board.Observe(runner.Scan{AccountID: "discovered", Platform: "twitch", Campaigns: []platform.Campaign{c}, At: time.Now()})
+	_, csrf := g.session()
+	resp, body := g.do("PUT", "/api/campaigns/twitch/c1/drops/badge/excluded", csrf, map[string]bool{"excluded": true})
+	require.Equal(t, 204, resp.StatusCode, string(body))
+	code, detail := g.campaign("/api/campaigns/twitch/c1")
+	require.Equal(t, 200, code)
+	require.Len(t, detail.Drops, 1)
+	require.True(t, detail.Drops[0].Excluded)
+	require.Empty(t, detail.Drops[0].Accounts, "no live cells must not hide global exclusion")
+	resp, body = g.do("PUT", "/api/campaigns/twitch/c1/drops/badge/excluded", csrf, map[string]bool{"excluded": false})
+	require.Equal(t, 204, resp.StatusCode, string(body))
+	_, detail = g.campaign("/api/campaigns/twitch/c1")
+	require.False(t, detail.Drops[0].Excluded)
+	claims, err := g.s.d.Claims.ForCampaign(context.Background(), "twitch", "c1")
+	require.NoError(t, err)
+	require.Empty(t, claims)
+}
+
 func (g *gamesEnv) campaign(path string) (int, campaignDetailJSON) {
 	g.t.Helper()
 	resp, b := g.do("GET", path, "", nil)

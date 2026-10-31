@@ -28,6 +28,7 @@ type campaignDropJSON struct {
 	Name            string             `json:"name"`
 	ImageURL        string             `json:"image_url"`
 	RequiredMinutes int                `json:"required_minutes"`
+	Excluded        bool               `json:"excluded"`
 	Accounts        []campaignCellJSON `json:"accounts"`
 }
 
@@ -47,6 +48,63 @@ type campaignDetailJSON struct {
 func (s *server) routesCampaigns(r chi.Router) {
 	r.Get("/campaigns/{platform}/{id}", s.getCampaign)
 	r.Post("/campaigns/{platform}/{id}/drops/{benefit}/claim-all", s.postCampaignDropClaimAll)
+	r.Put("/campaigns/{platform}/{id}/drops/{benefit}/excluded", s.putDropExcluded)
+}
+
+func (s *server) putDropExcluded(w http.ResponseWriter, r *http.Request) {
+	pf, id, benefit := chi.URLParam(r, "platform"), pathParam(r, "id"), pathParam(r, "benefit")
+	if pf != "twitch" && pf != "kick" {
+		writeErr(w, 400, "bad_request")
+		return
+	}
+	var body struct {
+		Excluded *bool `json:"excluded"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	if body.Excluded == nil {
+		writeErr(w, 400, "bad_request")
+		return
+	}
+	known := false
+	if s.d.Board != nil {
+		detail, _ := s.d.Board.Campaign(pf, id)
+		for _, d := range detail.Drops {
+			if d.ID == benefit {
+				known = true
+				break
+			}
+		}
+	}
+	if !known && s.d.Claims != nil {
+		claims, err := s.d.Claims.ForCampaign(r.Context(), pf, id)
+		if err != nil {
+			writeErr(w, 500, "internal")
+			return
+		}
+		for _, c := range claims {
+			if c.BenefitID == benefit {
+				known = true
+				break
+			}
+		}
+	}
+	if !known {
+		writeErr(w, 404, "not_found")
+		return
+	}
+	if err := store.NewDropExclusions(s.d.Q).Set(r.Context(), pf, benefit, *body.Excluded); err != nil {
+		writeErr(w, 500, "internal")
+		return
+	}
+	if p, ok := s.d.Pool.(interface{ DropExclusionsChanged(string, string) }); ok {
+		p.DropExclusionsChanged(pf, benefit)
+	}
+	if s.d.Hub != nil {
+		s.d.Hub.Publish(Event{Name: EventGames, Data: struct{}{}})
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // postCampaignDropClaimAll marks a campaign drop collected locally for every
@@ -218,6 +276,11 @@ func (s *server) getCampaign(w http.ResponseWriter, r *http.Request) {
 	}
 
 	planned := plannedDrops(s.d.Pool)
+	excluded, err := store.NewDropExclusions(s.d.Q).List(ctx, pf)
+	if err != nil {
+		writeErr(w, 500, "internal")
+		return
+	}
 	idx := map[string]int{}
 	for _, d := range detail.Drops {
 		dj := campaignDropJSON{ID: d.ID, Name: d.Name, ImageURL: d.ImageURL, RequiredMinutes: d.RequiredMinutes, Accounts: []campaignCellJSON{}}
@@ -269,6 +332,7 @@ func (s *server) getCampaign(w http.ResponseWriter, r *http.Request) {
 	// Accounts no longer in the store are dropped. Images go through the same
 	// rewrite as Discover, so Kick art loads via the proxy.
 	for i := range out.Drops {
+		out.Drops[i].Excluded = excluded[out.Drops[i].ID]
 		out.Drops[i].ImageURL = rewardImage(pf, out.Drops[i].ImageURL)
 		kept := out.Drops[i].Accounts[:0]
 		for _, c := range out.Drops[i].Accounts {

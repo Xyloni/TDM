@@ -236,6 +236,7 @@ export interface DropCell {
 }
 
 export interface CampaignDrop {
+	excluded?: boolean;
 	id: string;
 	name: string;
 	image_url: string;

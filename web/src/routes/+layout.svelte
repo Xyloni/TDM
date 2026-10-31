@@ -4,6 +4,7 @@
 	import { matchLang, setLang } from '$lib/i18n/index.svelte';
 	import { applyPrefs } from '$lib/prefs.svelte';
 	import favicon16 from '../../../assets/img/favicon-16.png';
+	import faviconICO from '../../../assets/img/pzhomba-pump.ico';
 	import favicon32 from '../../../assets/img/favicon-32.png';
 	import touchIcon from '../../../assets/img/apple-touch-icon.png';
 
@@ -30,6 +31,7 @@
 </script>
 
 <svelte:head>
+	<link rel="icon" type="image/x-icon" href={faviconICO} />
 	<link rel="icon" type="image/png" sizes="32x32" href={favicon32} />
 	<link rel="icon" type="image/png" sizes="16x16" href={favicon16} />
 	<link rel="apple-touch-icon" href={touchIcon} />

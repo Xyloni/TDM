@@ -24,6 +24,7 @@ type Input struct {
 	// Benefit IDs the user marked collected by hand. They count as claimed
 	// whatever the inventory says.
 	Marked    map[string]bool
+	Excluded  map[string]bool // global opt-out, does not satisfy prerequisites
 	Skipped   map[string]bool // benefit IDs the runner gave up on
 	NotLinked map[string]bool // benefit IDs whose claim the platform refused until linked
 	Order     []string        // session Up next override, benefit IDs
@@ -53,6 +54,7 @@ const (
 	ReasonNotLinked    Reason = "not_linked"
 	ReasonPrecondition Reason = "precondition"
 	ReasonSkipped      Reason = "skipped"
+	ReasonExcluded     Reason = "excluded"
 )
 
 type Blocked struct {
@@ -183,6 +185,8 @@ func Build(in Input) Result {
 			}
 			t := Target{Campaign: c, Benefit: b, Minutes: minutes[b.ID]}
 			switch {
+			case in.Excluded[b.ID]:
+				e.blocked = append(e.blocked, Blocked{t, ReasonExcluded})
 			case in.NotLinked[b.ID]:
 				e.blocked = append(e.blocked, Blocked{t, ReasonNotLinked})
 			case unlinked && t.Minutes >= b.RequiredMinutes:

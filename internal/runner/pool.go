@@ -422,6 +422,32 @@ func (p *Pool) RescanAll() {
 	}
 }
 
+// DropExclusionsChanged interrupts only a watch on the changed reward.
+// Other watches keep their heartbeat cadence and refresh their plans normally.
+func (p *Pool) DropExclusionsChanged(platform, benefitID string) {
+	p.mu.Lock()
+	units := slices.Clone(p.units)
+	p.mu.Unlock()
+	for _, u := range units {
+		if r, ok := u.current().Unit.(*Runner); ok && r.cfg.Platform == platform {
+			r.mu.Lock()
+			affected := r.current != nil && r.current.Benefit.ID == benefitID
+			if affected {
+				r.unpinLocked(benefitID)
+			}
+			r.mu.Unlock()
+			r.Rescan()
+			if affected {
+				r.switchNow.Store(true)
+				select {
+				case r.switchCh <- struct{}{}:
+				default:
+				}
+			}
+		}
+	}
+}
+
 // RescanAccount asks one account to rebuild its plan now.
 func (p *Pool) RescanAccount(accountID string) bool {
 	p.mu.Lock()

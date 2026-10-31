@@ -27,7 +27,8 @@ export function needsLink(c: Pick<CampaignDetail, 'drops'>): boolean {
 const BLOCKED: Record<string, string> = {
 	not_linked: 'campaign.blocked_link',
 	precondition: 'campaign.blocked_precondition',
-	skipped: 'campaign.blocked_skipped'
+	skipped: 'campaign.blocked_skipped',
+	excluded: 'campaign.blocked_excluded'
 };
 
 /** i18n key for a cell's status text. Accruing and claimable show minutes instead. */

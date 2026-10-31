@@ -365,7 +365,10 @@ func (ro *roster) runnerConfig(ctx context.Context, a gen.Account, b platform.Ba
 			}
 			return on
 		},
-		Lang:      ro.uiLanguage,
+		Lang: ro.uiLanguage,
+		ExcludedDrops: func(ctx context.Context) (map[string]bool, error) {
+			return store.NewDropExclusions(ro.q).List(ctx, a.Platform)
+		},
 		ScanEvery: ro.scanEvery,
 		Preempt:   ro.preempt,
 		OnScan: func(ctx context.Context, s runner.Scan) {

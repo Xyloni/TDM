@@ -69,7 +69,9 @@
 		font: inherit;
 		font-size: 11px;
 		cursor: pointer;
-		white-space: nowrap;
+		max-width: 100%;
+		white-space: normal;
+		text-align: left;
 	}
 	button:hover:not(:disabled),
 	button.armed {

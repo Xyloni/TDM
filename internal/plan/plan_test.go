@@ -16,6 +16,21 @@ func ben(id string, min int) platform.DropBenefit {
 	return platform.DropBenefit{ID: id, RequiredMinutes: min}
 }
 
+func TestExcludedRewardDoesNotForgeClaimsOrSatisfyPrerequisites(t *testing.T) {
+	badge := ben("badge", 15)
+	dependent := ben("dependent", 60)
+	dependent.Preconditions = []string{"badge"}
+	other := ben("other", 30)
+	result := Build(Input{Games: []Game{{Name: "Rust"}}, Campaigns: []platform.Campaign{camp("c", "twitch", "Rust", badge, dependent, other)}, Excluded: map[string]bool{"badge": true}})
+	eq(t, ids(result.Queue), []string{"other"})
+	if len(result.Claimed) != 0 || len(result.Blocked) != 2 {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	if result.Blocked[0].Reason != ReasonExcluded || result.Blocked[1].Reason != ReasonPrecondition {
+		t.Fatalf("blocked: %+v", result.Blocked)
+	}
+}
+
 func ids(q []Target) []string {
 	out := []string{}
 	for _, t := range q {

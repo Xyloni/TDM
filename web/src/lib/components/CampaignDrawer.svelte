@@ -142,6 +142,20 @@
 		return drop.accounts.filter((c) => c.state !== 'claimed');
 	}
 
+	async function toggleExcluded(drop: CampaignDrop): Promise<void> {
+		if (!target) return;
+		bulkBusy = true;
+		markErr = '';
+		try {
+			await api.setDropExcluded(target.platform, target.id, drop.id, !drop.excluded);
+			await load(true);
+		} catch {
+			markErr = t('campaign.exclude_failed');
+		} finally {
+			bulkBusy = false;
+		}
+	}
+
 	/** Marks this campaign drop collected in GrubDrops for every scanned account. */
 	async function markAll(drop: CampaignDrop): Promise<void> {
 		const tg = target;
@@ -235,6 +249,7 @@
 			{#if !data.live}<p class="sum">{t('campaign.from_claims')}</p>{/if}
 			{#if markErr}<p class="msg err mark-err" role="alert">{markErr}</p>{/if}
 			{#if markNotice}<p class="msg mark-notice" role="status">{markNotice}</p>{/if}
+			<p class="msg">{t('campaign.exclude_hint')}</p>
 			{#if href}
 				<p class="link">
 					<span>{t('campaign.link_banner')}</span>
@@ -265,6 +280,14 @@
 									/>
 								</span>
 							{/if}
+							<span class="bulk">
+								<BulkMarkButton
+									label={t(d.excluded ? 'campaign.include_all' : 'campaign.exclude_all')}
+									confirmLabel={t(d.excluded ? 'campaign.include_confirm' : 'campaign.exclude_confirm')}
+									disabled={bulkBusy}
+									onconfirm={() => toggleExcluded(d)}
+								/>
+							</span>
 						</div>
 						<div class="cells">
 							{#each d.accounts as c (c.account_id)}
@@ -511,6 +534,7 @@
 	}
 	.bulk {
 		display: inline-flex;
+		max-width: 100%;
 		justify-self: start;
 	}
 	.st {

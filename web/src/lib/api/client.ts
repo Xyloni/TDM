@@ -93,6 +93,7 @@ export interface Api {
 	renameAccount(id: string, name: string): Promise<void>;
 	setAccountOrder(ids: string[]): Promise<void>;
 	removeAccount(id: string): Promise<void>;
+	setDropExcluded(platform: Platform, campaignId: string, benefitId: string, excluded: boolean): Promise<void>;
 	removeAllAccounts(): Promise<void>;
 	twitchBatchLogin(accounts: { url: string; group?: number }[]): Promise<{ results: boolean[] }>;
 	setAccountEnabled(id: string, enabled: boolean): Promise<void>;
@@ -260,6 +261,7 @@ export function createClient(opts: ClientOpts): Api {
 		renameAccount: (id, name) => send('PATCH', `/api/accounts/${enc(id)}`, { name }) as Promise<void>,
 		setAccountOrder: (ids) => send('PUT', '/api/accounts/order', { ids }) as Promise<void>,
 		removeAccount: (id) => send('DELETE', `/api/accounts/${enc(id)}`) as Promise<void>,
+		setDropExcluded: (platform, campaignId, benefitId, excluded) => send('PUT', `/api/campaigns/${enc(platform)}/${enc(campaignId)}/drops/${enc(benefitId)}/excluded`, { excluded }) as Promise<void>,
 		removeAllAccounts: () => send('DELETE', '/api/accounts') as Promise<void>,
 		twitchBatchLogin: (accounts) => post('/api/login/twitch/batch', { accounts }),
 		setAccountEnabled: (id, enabled) =>

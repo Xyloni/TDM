@@ -538,6 +538,14 @@ func (r *Runner) scan(ctx context.Context, progress []platform.Progress, havePro
 	r.reapRewards(ctx, camps)
 
 	var claimed, marked map[string]bool
+	var excluded map[string]bool
+	if r.cfg.ExcludedDrops != nil {
+		var err error
+		excluded, err = r.cfg.ExcludedDrops(ctx)
+		if err != nil {
+			return plan.Result{}, fmt.Errorf("drop exclusions: %w", err)
+		}
+	}
 	if r.cfg.Claims != nil {
 		m, err := r.cfg.Claims.ClaimedBenefitIDs(ctx, r.cfg.AccountID)
 		if err == nil {
@@ -578,6 +586,7 @@ func (r *Runner) scan(ctx context.Context, progress []platform.Progress, havePro
 		Progress:  progress,
 		Claimed:   claimed,
 		Marked:    marked,
+		Excluded:  excluded,
 		Skipped:   skipped,
 		NotLinked: notLinked,
 		Order:     order,

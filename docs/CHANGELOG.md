@@ -5,6 +5,7 @@ All notable changes to GrubDrops.
 ## [Unreleased]
 
 ### Added
+- **Exclude a reward for every account.** The campaign drawer can exclude or restore a reward even when it has no account cells. The preference survives restarts, applies to future accounts, and interrupts an affected watch without waiting for the next minute. Exclusion does not forge claims or satisfy platform prerequisites.
 - **Pinned Telegram group handoffs.** When the account queue advances, notify the configured Telegram chat which group completed the campaign and which group is now active, then pin that message. A completed round reports that the first group is selecting the next campaign. Notification or pin errors are logged without stopping mining; existing pins are retained. Messages follow the interface language.
 - **Full session log.** Save all debug-and-higher events directly to `miner.log` beside the database, replace the previous journal at startup, and download the complete current session from Health instead of only the last 1000 entries. Console and dashboard verbosity stay unchanged.
 - **Parallel account import.** File imports validate up to 16 Twitch accounts concurrently, index existing user sessions once, and retain per-line success results and deterministic group order.
@@ -12,9 +13,12 @@ All notable changes to GrubDrops.
 - **Slow tick diagnostics.** Runner logs identify account operations that exceed the minute heartbeat interval.
 
 ### Changed
+- **Interface branding.** Use Pzhomba Pump in the interface, browser title and setup text, with the supplied logo and multi-size icon stored under `assets/img/`.
 - **Remove all accounts.** The UI uses a single API request and one database transaction to remove accounts, sessions, group assignments, and dependent working state. Existing claim and watch-minute history is retained.
 
 ### Fixed
+- **False authentication alerts during import.** New accounts awaiting their first login do not generate outage/recovery notifications. Canceled checks and failed session reads leave auth health unchanged; stale checks after deletion or a replacement login are discarded.
+- **Canceled dashboard requests.** Stop walking account lists after request cancellation and suppress session-lookup warnings caused by that cancellation.
 - **Watch interruptions after inventory errors.** A failed progress read keeps a successful watch alive and retries on the next tick.
 - **Delayed Twitch beacons.** Playlist work and the minute beacon run concurrently within a 25-second watch-operation deadline, so a slow CDN cannot postpone the independent beacon for minutes.
 - **Scraped URL redirects.** Twitch beacon/settings and HLS requests validate every redirect destination; production OAuth requests require HTTPS.

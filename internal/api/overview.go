@@ -77,7 +77,9 @@ func (s *server) signedOut(ctx context.Context, id string) bool {
 	}
 	_, ok, err := s.d.Sessions.Get(ctx, id)
 	if err != nil {
-		slog.Warn("overview: session lookup failed", "kind", "error", "account", id, "err", err)
+		if ctx.Err() == nil {
+			slog.Warn("overview: session lookup failed", "kind", "error", "account", id, "err", err)
+		}
 		return false
 	}
 	return !ok
@@ -93,6 +95,9 @@ func (s *server) getOverview(w http.ResponseWriter, r *http.Request) {
 	names := make(map[string]string, len(accts))
 	signedOutIDs := map[string]bool{}
 	for _, a := range accts {
+		if ctx.Err() != nil {
+			return
+		}
 		names[a.ID] = store.AccountName(a)
 		if s.signedOut(ctx, a.ID) {
 			signedOutIDs[a.ID] = true

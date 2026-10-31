@@ -198,7 +198,7 @@ func accountGroupCampaignComplete(members []gen.Account, snapshots map[string]ru
 			}
 		}
 		for _, blocked := range snapshot.Blocked {
-			if blocked.Campaign.ID != campaignID || blocked.Reason == plan.ReasonSkipped {
+			if blocked.Campaign.ID != campaignID || blocked.Reason == plan.ReasonSkipped || blocked.Reason == plan.ReasonExcluded {
 				continue
 			}
 			// A Twitch drop can reach its full watch time but remain unclaimable

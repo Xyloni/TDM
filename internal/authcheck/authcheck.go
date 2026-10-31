@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"reflect"
 	"time"
 
 	"github.com/aalejandrofer/grubdrops/internal/platform"
@@ -19,12 +20,14 @@ import (
 
 // Prefix namespaces per-account auth-check results in the kv table.
 const Prefix = "authcheck:"
+const noSessionMessage = "no session — never authenticated"
 
 // Result is the persisted outcome of one account's auth probe.
 type Result struct {
-	OK        bool   `json:"ok"`
-	CheckedAt int64  `json:"checked_at"`
-	Msg       string `json:"msg"`
+	OK            bool   `json:"ok"`
+	CheckedAt     int64  `json:"checked_at"`
+	Msg           string `json:"msg"`
+	Uninitialized bool   `json:"uninitialized,omitempty"`
 }
 
 // sessionGetter is the slice of *store.SessionStore the checker needs.
@@ -116,11 +119,21 @@ func (c *Checker) CheckAll(ctx context.Context) {
 		return
 	}
 	for _, a := range accs {
+		if ctx.Err() != nil {
+			return
+		}
 		c.checkOne(ctx, a.ID, a.Platform, store.AccountName(a))
 	}
 }
 
 func (c *Checker) checkOne(ctx context.Context, accountID, plat, name string) {
+	if ctx.Err() != nil {
+		return
+	}
+	// A sweep may still hold an account deleted by a concurrent reimport.
+	if _, err := c.q.GetAccount(ctx, accountID); err != nil {
+		return
+	}
 	res := Result{CheckedAt: time.Now().Unix()}
 	b, ok := c.registry.Get(plat)
 	if !ok {
@@ -136,8 +149,15 @@ func (c *Checker) checkOne(ctx context.Context, accountID, plat, name string) {
 		return
 	}
 	sess, found, err := c.sessions.Get(ctx, accountID)
-	if err != nil || !found {
-		res.Msg = "no session — never authenticated"
+	if err != nil {
+		if ctx.Err() == nil {
+			c.log.Warn("authcheck: session read failed; auth state unchanged", "account", accountID, "err", err)
+		}
+		return
+	}
+	if !found {
+		res.Msg = noSessionMessage
+		res.Uninitialized = true
 		c.persistWithMeta(ctx, accountID, plat, name, res)
 		return
 	}
@@ -148,6 +168,18 @@ func (c *Checker) checkOne(ctx context.Context, accountID, plat, name string) {
 		res.OK, res.Msg = false, truncate(err.Error(), 200)
 	} else {
 		res.OK, res.Msg = true, "ok"
+	}
+	if cctx.Err() != nil || ctx.Err() != nil {
+		return
+	}
+	// Discard a probe that raced a deletion or replacement login.
+	if _, err := c.q.GetAccount(ctx, accountID); err != nil {
+		return
+	}
+	current, found, err := c.sessions.Get(ctx, accountID)
+	current.AccountID = accountID
+	if err != nil || !found || !reflect.DeepEqual(current, sess) {
+		return
 	}
 	c.persistWithMeta(ctx, accountID, plat, name, res)
 	c.log.Info("authcheck", "kind", "auth", "account", accountID, "ok", res.OK, "msg", res.Msg)
@@ -201,6 +233,9 @@ func (c *Checker) persist(ctx context.Context, accountID string, res Result) {
 // the notification human-readable. Empty meta values are omitted from the
 // notify fields.
 func (c *Checker) persistWithMeta(ctx context.Context, accountID, plat, name string, res Result) {
+	if ctx.Err() != nil {
+		return
+	}
 	prev, hadPrev := Load(ctx, c.q, accountID)
 
 	b, _ := json.Marshal(res)
@@ -223,6 +258,12 @@ func (c *Checker) persistWithMeta(ctx context.Context, accountID, plat, name str
 // send 24 messages a day per dead account.
 func (c *Checker) notifyTransition(ctx context.Context, accountID, plat, name string, prev Result, hadPrev bool, res Result) {
 	if c.notifier == nil {
+		return
+	}
+	// A newly created account has no session until login finishes. That is
+	// setup state, not an authentication outage (nor a subsequent recovery).
+	initial := func(r Result) bool { return r.Uninitialized || r.Msg == noSessionMessage }
+	if (initial(res) && (!hadPrev || initial(prev))) || (res.OK && hadPrev && initial(prev)) {
 		return
 	}
 	if hadPrev && prev.OK == res.OK {
@@ -257,6 +298,9 @@ func (c *Checker) CheckAccount(ctx context.Context, accountID string) (Result, e
 		return Result{}, err
 	}
 	c.checkOne(ctx, a.ID, a.Platform, store.AccountName(a))
+	if ctx.Err() != nil {
+		return Result{}, ctx.Err()
+	}
 	res, _ := Load(ctx, c.q, a.ID)
 	return res, nil
 }

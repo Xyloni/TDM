@@ -98,12 +98,15 @@ func (s *server) listAccounts(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]accountJSON, 0, len(accs))
 	for _, a := range accs {
+		if ctx.Err() != nil {
+			return
+		}
 		state := states[a.ID]
 		if state == "" {
 			state = string(runner.StateIdle)
 		}
 		_, hasSession, err := s.d.Sessions.Get(ctx, a.ID)
-		if err != nil {
+		if err != nil && ctx.Err() == nil {
 			slog.Warn("accounts: session lookup failed", "kind", "error", "account", a.ID, "err", err)
 		}
 		item := accountJSON{

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/aalejandrofer/grubdrops/internal/platform"
+	"github.com/aalejandrofer/grubdrops/internal/platform/platformtest"
 	"github.com/aalejandrofer/grubdrops/internal/store"
 	"github.com/aalejandrofer/grubdrops/internal/store/gen"
 )
@@ -93,6 +94,70 @@ func TestPersist_FirstEverFailureNotifies(t *testing.T) {
 	c.persist(ctx, "acc_1", Result{OK: false, Msg: "no session"})
 	if got := fn.count(); got != 1 {
 		t.Fatalf("first-ever fail should notify, got %d sends", got)
+	}
+}
+
+func TestNewAccountMissingSessionAndFirstLoginDoNotNotify(t *testing.T) {
+	ctx := context.Background()
+	fn := &fakeNotifier{}
+	c := New(testQueries(t), nil, nil).WithNotifier(fn)
+	c.persist(ctx, "new", Result{Msg: noSessionMessage, Uninitialized: true})
+	c.persist(ctx, "new", Result{Msg: noSessionMessage, Uninitialized: true})
+	c.persist(ctx, "new", Result{OK: true, Msg: "ok"})
+	if fn.count() != 0 {
+		t.Fatalf("setup sent %d auth alerts", fn.count())
+	}
+	c.persist(ctx, "new", Result{Msg: "401 unauthorized"})
+	if fn.count() != 1 {
+		t.Fatal("real auth failure should still notify")
+	}
+}
+
+func TestCanceledCheckDoesNotStoreOrNotify(t *testing.T) {
+	q := testQueries(t)
+	fn := &fakeNotifier{}
+	c := New(q, nil, nil).WithNotifier(fn)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	c.checkOne(ctx, "new", "twitch", "New")
+	c.persist(ctx, "new", Result{Msg: noSessionMessage})
+	if fn.count() != 0 {
+		t.Fatal("canceled check sent notification")
+	}
+	if _, ok := Load(context.Background(), q, "new"); ok {
+		t.Fatal("canceled check stored false auth state")
+	}
+}
+
+type errorSessions struct{}
+
+func (errorSessions) Get(context.Context, string) (platform.Session, bool, error) {
+	return platform.Session{}, false, context.Canceled
+}
+
+type checkingBackend struct{ *platformtest.Fake }
+
+func (*checkingBackend) Name() string { return "twitch" }
+
+func (*checkingBackend) VerifyAuth(context.Context, platform.Session) error { return nil }
+
+func TestSessionReadErrorIsNotReportedAsNeverAuthenticated(t *testing.T) {
+	ctx := context.Background()
+	q := testQueries(t)
+	fn := &fakeNotifier{}
+	_, err := q.CreateAccount(ctx, gen.CreateAccountParams{ID: "existing", Platform: "twitch", DisplayName: "Existing", FingerprintJson: "{}", Status: "idle", Enabled: 1, CreatedAt: 1, UpdatedAt: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := platform.NewRegistry()
+	fake := platformtest.NewFake()
+	reg.Register(&checkingBackend{fake})
+	c := New(q, errorSessions{}, reg).WithNotifier(fn)
+	c.persist(ctx, "existing", Result{OK: true, Msg: "ok"})
+	c.checkOne(ctx, "existing", "twitch", "Existing")
+	got, ok := Load(ctx, q, "existing")
+	if !ok || !got.OK || fn.count() != 0 {
+		t.Fatalf("read cancellation changed auth state: %+v, alerts=%d", got, fn.count())
 	}
 }
 
