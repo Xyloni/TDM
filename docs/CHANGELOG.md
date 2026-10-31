@@ -9,7 +9,6 @@ All notable changes to GrubDrops.
 - **Full session log.** Save all debug-and-higher events directly to `miner.log` beside the database, replace the previous journal at startup, and download the complete current session from Health instead of only the last 1000 entries. Console and dashboard verbosity stay unchanged.
 - **Parallel account import.** File imports validate up to 16 Twitch accounts concurrently, index existing user sessions once, and retain per-line success results and deterministic group order.
 - **Account maintenance pause.** Adding, signing in, or deleting accounts drains all miners first and queues runner reloads until the operation finishes. Device-code session completion uses the same guard.
-- **Windows launcher alias.** `ru-miner.bat` delegates to the existing `run-miner.bat` launcher.
 - **Slow tick diagnostics.** Runner logs identify account operations that exceed the minute heartbeat interval.
 
 ### Changed
@@ -21,6 +20,9 @@ All notable changes to GrubDrops.
 - **Scraped URL redirects.** Twitch beacon/settings and HLS requests validate every redirect destination; production OAuth requests require HTTPS.
 - **Account cleanup.** Explicitly remove additional account-owned rows and cached login/skip/link state, release stopped pool registrations, and forget deleted accounts' refresh-warning cache.
 - **Windows test portability.** Simulated ticks no longer depend on nanosecond clock resolution; tests respect Windows file-permission and JavaScript MIME behavior.
+
+### Removed
+- **Duplicate Windows launcher.** Keep `run-miner.bat` as the only Windows launch script.
 
 ### Notes
 - Changes to the watch path remain unreleased pending verification against a live Twitch drop.
