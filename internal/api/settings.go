@@ -69,10 +69,11 @@ type settingsCanary struct {
 }
 
 type settingsBody struct {
-	Language   string `json:"language"`
-	TimeFormat string `json:"time_format"`
-	Theme      string `json:"theme"`
-	Timezone   string `json:"timezone"`
+	TelegramCommands bool   `json:"telegram_commands"`
+	Language         string `json:"language"`
+	TimeFormat       string `json:"time_format"`
+	Theme            string `json:"theme"`
+	Timezone         string `json:"timezone"`
 	// ZoneEffective is the zone the server resolves; Local is reported as UTC.
 	ZoneEffective string           `json:"zone_effective"`
 	Discord       settingsDiscord  `json:"discord"`
@@ -157,6 +158,9 @@ func (s *server) loadSettings(ctx context.Context) (settingsBody, error) {
 	st := s.d.Settings
 	var b settingsBody
 	var err error
+	if b.TelegramCommands, err = st.TelegramCommands(ctx); err != nil {
+		return b, err
+	}
 	if b.Language, err = st.UILanguage(ctx); err != nil {
 		return b, err
 	}
@@ -261,6 +265,7 @@ type settingsPut struct {
 	Telegram         json.RawMessage `json:"telegram"`
 	TelegramBotToken *string         `json:"telegram_bot_token"`
 	TelegramChatID   *string         `json:"telegram_chat_id"`
+	TelegramCommands *bool           `json:"telegram_commands"`
 	Notify           *struct {
 		Claim        *bool `json:"claim"`
 		Auth         *bool `json:"auth"`
@@ -430,6 +435,11 @@ func (s *server) applySettings(ctx context.Context, req settingsPut) error {
 	}
 	if req.TelegramBotToken != nil {
 		if err := st.SetTelegramBotToken(ctx, *req.TelegramBotToken); err != nil {
+			return err
+		}
+	}
+	if req.TelegramCommands != nil {
+		if err := st.SetTelegramCommands(ctx, *req.TelegramCommands); err != nil {
 			return err
 		}
 	}

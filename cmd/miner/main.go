@@ -309,8 +309,9 @@ func run(ctx context.Context) (runErr error) {
 			notify.EventSummary:  dailySummary,
 			notify.EventState:    false,
 			// Manual "send test" always delivers, regardless of toggles.
-			notify.EventTest:        true,
-			notify.EventGroupSwitch: true,
+			notify.EventTest:         true,
+			notify.EventGroupSwitch:  true,
+			notify.EventFarmProblems: errs,
 		}}
 		globalURL, _ := settingsStore.GlobalDiscordWebhook(ctx)
 		if globalURL == "" {
@@ -334,6 +335,10 @@ func run(ctx context.Context) (runErr error) {
 		if tgToken != "" && tgChat != "" {
 			// proxyTransport is nil when no proxy is configured (direct).
 			bot := notify.NewTelegramBotWithTransport(tgToken, tgChat, filter, proxyTransport)
+			bot.LoadDigest = func(ctx context.Context) (int64, error) { return settingsStore.FarmDigestMessage(ctx, tgToken, tgChat) }
+			bot.SaveDigest = func(ctx context.Context, id int64) error {
+				return settingsStore.SetFarmDigestMessage(ctx, tgToken, tgChat, id)
+			}
 			multi.Targets = append(multi.Targets, notify.Named{Name: notify.TargetTelegram, Notifier: bot})
 		}
 		if len(multi.Targets) == 0 {
@@ -479,6 +484,20 @@ func run(ctx context.Context) (runErr error) {
 		return fmt.Errorf("initial runner boot: %w", err)
 	}
 	bg.Go(ro.runAccountGroupQueue)
+	bg.Go(ro.runFarmDigest)
+	bg.Go(func() {
+		ro.runTelegramCommands(func() *notify.TelegramBot {
+			on, err := settingsStore.TelegramCommands(ctx)
+			if err != nil || !on {
+				return nil
+			}
+			token, chat := telegramConfig(ctx, settingsStore, cfg)
+			if token == "" || chat == "" {
+				return nil
+			}
+			return notify.NewTelegramBotWithTransport(token, chat, nil, proxyTransport)
+		})
+	})
 	// After the boot, so the first pass has sessions to borrow.
 	bg.Go(func() { forceChecker.Run(ctx, ro.forceList, forceCheckEvery) })
 

@@ -227,6 +227,7 @@ func (r *Runner) tick(ctx context.Context) error {
 		slog.Error("runner inventory failed", "kind", "error", "account", r.cfg.AccountID, "err", err)
 		r.mu.Lock()
 		r.accrual = accrualWindow{}
+		r.farm.breakWatch()
 		r.mu.Unlock()
 		// The watch heartbeat succeeded. A failed progress read is not evidence
 		// the stream stopped; preserve the handle and retry on the next minute.
@@ -263,6 +264,9 @@ func (r *Runner) tick(ctx context.Context) error {
 			continue
 		}
 		matched = true
+		r.mu.Lock()
+		r.farm.observe(polledAt, benefit.ID, p.MinutesWatched)
+		r.mu.Unlock()
 		if r.logProgress.Changed(fmt.Sprintf("%s/%d/%t", benefit.ID, p.MinutesWatched, p.Claimed)) {
 			slog.Info("runner progress", "kind", "progress", "account", r.cfg.AccountID,
 				"benefit", benefit.ID, "min_watched", p.MinutesWatched,
@@ -331,6 +335,7 @@ func (r *Runner) tick(ctx context.Context) error {
 	if !matched {
 		r.mu.Lock()
 		r.accrual = accrualWindow{}
+		r.farm.breakWatch()
 		r.mu.Unlock()
 		if len(progress) > 0 {
 			ids := make([]string, 0, len(progress))
@@ -513,6 +518,7 @@ func (r *Runner) stopWatch(ctx context.Context) {
 	s := r.stream
 	r.handle = nil
 	r.accrual = accrualWindow{}
+	r.farm.breakWatch()
 	r.stream = nil
 	r.clearWatchViewLocked()
 	r.mu.Unlock()

@@ -134,6 +134,7 @@ type Runner struct {
 	lastPollMin      int           // minutes at the last inventory poll; freeze detection only
 	accrual          accrualWindow // guarded by mu; inventory observations for this watch
 	nextSlowAttempt  time.Time     // per-account cooldown survives watch replacements
+	farm             farmHistory   // guarded by mu; rolling observations across watch segments
 	lastMilestone    int           // last progress milestone notified; -1 = none
 	milestoneBenefit string
 }
@@ -250,6 +251,7 @@ func (r *Runner) Snapshot() Snapshot {
 		StartedAt:      r.startedAt,
 		LastPollAt:     r.lastPollAt,
 		LastScanAt:     r.lastScanAt,
+		Farming:        r.farm.stats(time.Now()),
 		Blocked:        append([]plan.Blocked(nil), r.blocked...),
 	}
 	switch r.state {

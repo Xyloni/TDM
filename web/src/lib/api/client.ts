@@ -19,6 +19,7 @@ import type {
 	Health,
 	LinkRecheck,
 	Overview,
+	FarmingReport,
 	Platform,
 	Runner,
 	SearchHit,
@@ -62,6 +63,7 @@ export interface Api {
 	login(password: string): Promise<void>;
 	logout(): Promise<void>;
 	overview(): Promise<Overview>;
+	farming(): Promise<FarmingReport>;
 	runners(): Promise<Runner[]>;
 	setOrder(accountId: string, benefitIds: string[]): Promise<void>;
 	resetOrder(accountId: string): Promise<void>;
@@ -226,6 +228,7 @@ export function createClient(opts: ClientOpts): Api {
 		},
 		logout: () => post('/api/logout'),
 		overview: () => get('/api/overview'),
+		farming: () => get('/api/farming'),
 		runners: () => get('/api/runners'),
 		setOrder: (id, benefitIds) =>
 			send('PUT', `/api/runners/${enc(id)}/order`, { benefit_ids: benefitIds }) as Promise<void>,

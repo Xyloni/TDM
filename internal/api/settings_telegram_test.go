@@ -13,6 +13,29 @@ import (
 
 const tgToken = "123456:ABCdefGHIjklMNOpqrSTUvwxYZ0123456789"
 
+func TestSettingsTelegramCommandsTogglePersistsWithoutClearingBot(t *testing.T) {
+	e := newSettingsEnv(t)
+	ctx := context.Background()
+	require.NoError(t, e.st.SetTelegramBotToken(ctx, tgToken))
+	code, body := e.do("GET", "/settings", nil)
+	require.Equal(t, 200, code)
+	var got settingsBody
+	require.NoError(t, json.Unmarshal(body, &got))
+	require.True(t, got.TelegramCommands)
+	code, body = e.do("PUT", "/settings", map[string]any{"telegram_commands": false})
+	require.Equal(t, 200, code)
+	require.NoError(t, json.Unmarshal(body, &got))
+	require.False(t, got.TelegramCommands)
+	on, err := e.st.TelegramCommands(ctx)
+	require.NoError(t, err)
+	require.False(t, on)
+	token, err := e.st.TelegramBotToken(ctx)
+	require.NoError(t, err)
+	require.Equal(t, tgToken, token)
+	code, _ = e.do("PUT", "/settings", map[string]any{"telegram_commands": "false"})
+	require.Equal(t, 400, code)
+}
+
 func TestSettings_TelegramSaveAndMask(t *testing.T) {
 	e := newSettingsEnv(t)
 	code, b := e.do("PUT", "/settings", map[string]any{

@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -32,7 +33,14 @@ type TelegramBot struct {
 	Filter *VerbosityFilter
 	HTTP   *http.Client
 	// APIBase defaults to TelegramAPIBase when empty.
-	APIBase string
+	APIBase      string
+	LoadDigest   func(context.Context) (int64, error)
+	SaveDigest   func(context.Context, int64) error
+	digestMu     sync.Mutex
+	digestID     int64
+	digestLoaded bool
+	digestDirty  bool
+	digestText   string
 }
 
 func NewTelegramBot(token, chatID string, filter *VerbosityFilter) *TelegramBot {
@@ -53,6 +61,10 @@ func (t *TelegramBot) Notify(ctx context.Context, event Event, fields map[string
 		return nil
 	}
 	text := buildTelegramText(event, fields)
+	if event == EventFarmProblems {
+		active, _ := fields["active"].(bool)
+		return t.updateDigest(ctx, text, active)
+	}
 	if event == EventGroupSwitch {
 		return t.sendPinnedMessage(ctx, text)
 	}
@@ -184,7 +196,7 @@ func (t *TelegramBot) post(ctx context.Context, method string, body []byte) (int
 		return 0, tr, err
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	_ = json.Unmarshal(raw, &tr)
 	return resp.StatusCode, tr, nil
 }
@@ -282,7 +294,7 @@ func buildTelegramText(event Event, fields map[string]any) string {
 		return b.String()
 	}
 
-	if event == EventSummary || event == EventGroupSwitch {
+	if event == EventSummary || event == EventGroupSwitch || event == EventFarmProblems {
 		title := str("title")
 		if title == "" {
 			title = titleFor(event)

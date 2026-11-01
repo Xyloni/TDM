@@ -12,6 +12,7 @@
 		{ href: '/discover', key: 'nav.discover' },
 		{ href: '/games', key: 'nav.games' },
 		{ href: '/inventory', key: 'nav.inventory' },
+		{ href: '/farming', key: 'farm.title' },
 		{ href: '/settings', key: 'nav.settings' }
 	];
 	const on = (href: string) =>
@@ -66,6 +67,8 @@
 	}
 	.tabs {
 		display: flex;
+		overflow-x: auto;
+		white-space: nowrap;
 		gap: 2px;
 	}
 	.tabs a {

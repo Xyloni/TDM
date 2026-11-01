@@ -115,6 +115,7 @@ type Config struct {
 
 // Snapshot is a copy of the runner's observable state.
 type Snapshot struct {
+	Farming                           FarmingStats
 	AccountID, Platform               string
 	State                             State
 	Current                           *plan.Target

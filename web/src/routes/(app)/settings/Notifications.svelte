@@ -294,6 +294,10 @@
 				</div>
 			{/if}
 			<small class="help">{t('settings.telegram_help')}</small>
+			<div class="row">
+				<div class="lbl"><b id="tg-commands">{t('farm.commands.toggle')}</b><small>{t('farm.commands.toggle_help')}</small>{#if errs.telegram_commands}<small class="bad">{t('settings.save_failed')}</small>{/if}</div>
+				<button type="button" class="sw" role="switch" aria-checked={s.telegram_commands ?? true} aria-labelledby="tg-commands" onclick={() => save('telegram_commands', { telegram_commands: !(s.telegram_commands ?? true) })}></button>
+			</div>
 			{#if tgTokenBad}<span class="feedback bad" role="alert">{t('settings.token_invalid')}</span>{/if}
 			{#if tgChatBad}<span class="feedback bad" role="alert">{t('settings.chat_invalid')}</span>{/if}
 			{#if errs.telegram}<span class="feedback bad">{t('settings.save_failed')}</span>{/if}

@@ -2,6 +2,18 @@
 
 export type Platform = 'twitch' | 'kick';
 
+export interface FarmingWindow { gain: number; observation_minutes: number; rate: number | null; ready: boolean }
+export interface FarmingAccount {
+	id: string; name: string; platform: Platform; group: number; channel: string; reward: string; reason: string;
+	stats: { minutes_15: FarmingWindow; minutes_30: FarmingWindow; rotations_15: number };
+	remaining: number; eta_minutes: number | null; complete: boolean;
+}
+export interface FarmingReport {
+	at: string; accounts: FarmingAccount[]; observed: number; slow: number; problems: number; rotated: number;
+	group: { id: number; campaign_id: string; campaign: string; total: number; completed: number; unknown: number;
+		eta_minutes: number | null; estimated_at: string | null; delayers: FarmingAccount[] };
+}
+
 export interface Session {
 	authed: boolean;
 	setup_needed: boolean;
@@ -316,6 +328,7 @@ export interface Settings {
 	discord: { configured: boolean; webhook_hint: string };
 	/** token_hint is empty when the token comes from the env default. */
 	telegram: { configured: boolean; token_hint: string; chat_id: string };
+	telegram_commands?: boolean;
 	notify: { claim: boolean; auth: boolean; errors: boolean; daily_summary: boolean; progress: boolean; canary: boolean };
 	update_auto: boolean;
 	/** ordered mines games in list order; ending_soonest mines the campaign that ends first. */
@@ -358,6 +371,7 @@ export interface SettingsPatch {
 	discord_webhook?: string;
 	telegram_bot_token?: string;
 	telegram_chat_id?: string;
+	telegram_commands?: boolean;
 }
 
 export type HealthEventKind = 'claim' | 'progress' | 'state' | 'discovery' | 'error' | 'auth' | 'info';

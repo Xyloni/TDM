@@ -162,6 +162,7 @@ func NewRouter(d Deps) http.Handler {
 // routesProtected registers every admin-only resource. Add one line per
 // resource: s.routesX(r).
 func (s *server) routesProtected(r chi.Router) {
+	r.Get("/farming", s.getFarming)
 	s.routesEvents(r)
 	s.routesOverview(r)
 	s.routesGames(r)

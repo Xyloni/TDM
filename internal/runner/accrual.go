@@ -121,6 +121,9 @@ func (r *Runner) checkSlowAccrual(ctx context.Context, handle platform.WatchHand
 	err = r.start(ctx)
 	r.mu.Lock()
 	newChannel := r.channel
+	if err == nil && newChannel != "" && newChannel != handle.Channel {
+		r.farm.rotations = append(r.farm.rotations, time.Now())
+	}
 	r.mu.Unlock()
 	slog.Info("runner slow accrual channel rotation", "kind", "state", "account", r.cfg.AccountID, "benefit", benefit,
 		"old_channel", handle.Channel, "new_channel", newChannel, "window_minutes", reading.elapsed.Minutes(),

@@ -21,7 +21,8 @@ const (
 	// carry day, minutes, claims plus a localized title and msg.
 	EventSummary Event = "summary"
 	// EventGroupSwitch reports a committed account-group handoff to Telegram.
-	EventGroupSwitch Event = "group_switch"
+	EventGroupSwitch  Event = "group_switch"
+	EventFarmProblems Event = "farm_problems"
 )
 
 type Notifier interface {
