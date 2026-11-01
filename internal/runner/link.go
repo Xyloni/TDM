@@ -17,6 +17,14 @@ func (r *Runner) autoSkipUnlinkedCompleted(ctx context.Context, camps []platform
 	if r.cfg.AutoSkipUnlinked == nil || !r.cfg.AutoSkipUnlinked() || r.cfg.Claims == nil {
 		return claimed
 	}
+	// The active reward belongs to tick -> claim. Claiming it during a rescan
+	// would leave tick's inventory snapshot stale and process it a second time.
+	r.mu.Lock()
+	activeBenefit := ""
+	if r.handle != nil && r.current != nil {
+		activeBenefit = r.current.Benefit.ID
+	}
+	r.mu.Unlock()
 	minutes := make(map[string]int, len(progress))
 	platformClaimed := make(map[string]bool, len(progress))
 	for _, p := range progress {
@@ -33,6 +41,9 @@ func (r *Runner) autoSkipUnlinkedCompleted(ctx context.Context, camps []platform
 			continue
 		}
 		for _, b := range c.Benefits {
+			if b.ID == activeBenefit {
+				continue
+			}
 			if b.RequiredMinutes <= 0 || minutes[b.ID] < b.RequiredMinutes || platformClaimed[b.ID] || claimed[b.ID] {
 				continue
 			}
