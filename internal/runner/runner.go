@@ -128,11 +128,13 @@ type Runner struct {
 	// Per-watch safeguards (watch.go).
 	stalled          map[string]time.Time // channel -> cooldown end
 	tickN            int
-	noProgress       int // consecutive polls without a row for the benefit
-	noAdvance        int // consecutive polls with flat minutes
-	lastMin          int // latest minutes, polled or pushed; display and vanish checks
-	lastPollMin      int // minutes at the last inventory poll; freeze detection only
-	lastMilestone    int // last progress milestone notified; -1 = none
+	noProgress       int           // consecutive polls without a row for the benefit
+	noAdvance        int           // consecutive polls with flat minutes
+	lastMin          int           // latest minutes, polled or pushed; display and vanish checks
+	lastPollMin      int           // minutes at the last inventory poll; freeze detection only
+	accrual          accrualWindow // guarded by mu; inventory observations for this watch
+	nextSlowAttempt  time.Time     // per-account cooldown survives watch replacements
+	lastMilestone    int           // last progress milestone notified; -1 = none
 	milestoneBenefit string
 }
 

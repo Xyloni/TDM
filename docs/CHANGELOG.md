@@ -5,6 +5,7 @@ All notable changes to GrubDrops.
 ## [Unreleased]
 
 ### Added
+- **Slow Twitch accrual recovery.** Detect inventory progress below 90% of elapsed time over a rolling 15-minute window, confirm it after at least another minute, and switch to another eligible channel. Attempts are spaced 20 minutes apart per running account; missing/error progress, long observation gaps, watch stops and reward changes reset the window. Keep the current stream if no alternative exists and log measured progress plus old/new channels.
 - **Exclude a reward for every account.** The campaign drawer can exclude or restore a reward even when it has no account cells. The preference survives restarts, applies to future accounts, and interrupts an affected watch without waiting for the next minute. Exclusion does not forge claims or satisfy platform prerequisites.
 - **Pinned Telegram group handoffs.** When the account queue advances, notify the configured Telegram chat which group completed the campaign and which group is now active, then pin that message. A completed round reports that the first group is selecting the next campaign. Notification or pin errors are logged without stopping mining; existing pins are retained. Messages follow the interface language.
 - **Full session log.** Save all debug-and-higher events directly to `miner.log` beside the database, replace the previous journal at startup, and download the complete current session from Health instead of only the last 1000 entries. Console and dashboard verbosity stay unchanged.

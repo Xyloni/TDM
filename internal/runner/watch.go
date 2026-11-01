@@ -165,6 +165,7 @@ func (r *Runner) start(ctx context.Context) error {
 	r.noAdvance = 0
 	r.lastMin = 0
 	r.lastPollMin = 0
+	r.accrual = accrualWindow{}
 	if target.Benefit.ID != r.milestoneBenefit {
 		r.lastMilestone = -1
 		r.milestoneBenefit = target.Benefit.ID
@@ -224,12 +225,16 @@ func (r *Runner) tick(ctx context.Context) error {
 	progress, err := r.cfg.Backend.InventoryProgress(ctx, r.cfg.Session)
 	if err != nil {
 		slog.Error("runner inventory failed", "kind", "error", "account", r.cfg.AccountID, "err", err)
+		r.mu.Lock()
+		r.accrual = accrualWindow{}
+		r.mu.Unlock()
 		// The watch heartbeat succeeded. A failed progress read is not evidence
 		// the stream stopped; preserve the handle and retry on the next minute.
 		return ctx.Err()
 	}
+	polledAt := time.Now()
 	r.mu.Lock()
-	r.lastPollAt = time.Now()
+	r.lastPollAt = polledAt
 	lastScan := r.lastScanTry
 	r.mu.Unlock()
 	if r.cfg.OnProgress != nil {
@@ -316,9 +321,17 @@ func (r *Runner) tick(ctx context.Context) error {
 			r.setState(ctx, StateStarting)
 			return nil
 		}
+		if r.cfg.Platform == "twitch" {
+			if rotated, err := r.checkSlowAccrual(ctx, handle, benefit.ID, p.MinutesWatched, polledAt); rotated || err != nil {
+				return err
+			}
+		}
 	}
 
 	if !matched {
+		r.mu.Lock()
+		r.accrual = accrualWindow{}
+		r.mu.Unlock()
 		if len(progress) > 0 {
 			ids := make([]string, 0, len(progress))
 			for _, p := range progress {
@@ -499,6 +512,7 @@ func (r *Runner) stopWatch(ctx context.Context) {
 	r.playbackPulse = nil
 	s := r.stream
 	r.handle = nil
+	r.accrual = accrualWindow{}
 	r.stream = nil
 	r.clearWatchViewLocked()
 	r.mu.Unlock()
