@@ -49,7 +49,8 @@ const (
 )
 
 type Runner struct {
-	cfg Config
+	stopWatchMu sync.Mutex // joins concurrent shutdowns, including playback pulses
+	cfg         Config
 
 	mu          sync.Mutex
 	state       State
@@ -71,6 +72,7 @@ type Runner struct {
 	wake          chan struct{} // signalled on every state change, cap 1
 	rescan        chan struct{} // signalled by Rescan, cap 1
 	forceScan     atomic.Bool   // set by Rescan; the next watch poll rescans
+	playbackPulse *watchPulse   // guarded by mu; drained before StopWatch
 	switchCh      chan struct{} // signalled by MineNow, cap 1
 	switchNow     atomic.Bool   // set by MineNow; Run drops the watch and re-picks
 	// pinned is the Mine now target. pick keeps it while a scan merely omits

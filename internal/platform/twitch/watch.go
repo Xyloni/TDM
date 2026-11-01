@@ -14,7 +14,8 @@ import (
 )
 
 type watch struct {
-	c *client
+	c              *client
+	playlistBeatMu sync.Mutex // serialize foreground and background playlist calls
 
 	userIDMu     sync.Mutex
 	cachedUserID int64
@@ -72,7 +73,8 @@ func (w *watch) start(ctx context.Context, sess platform.Session, stream platfor
 		return platform.WatchHandle{}, fmt.Errorf("resolve user id: %w", err)
 	}
 	return platform.WatchHandle{
-		Channel: stream.Channel,
+		AccountID: sess.AccountID,
+		Channel:   stream.Channel,
 		Internal: watchInternal{
 			Channel:     stream.Channel,
 			ChannelID:   stream.ChannelID,
@@ -141,6 +143,8 @@ func (w *watch) heartbeat(ctx context.Context, h platform.WatchHandle) error {
 	go func() { playDone <- w.playlistHeartbeat(ctx, internal) }()
 	spadeErr := w.spadeHeartbeat(ctx, internal)
 	playErr := <-playDone
+	slog.Debug("twitch watch heartbeat paths", "account", h.AccountID, "channel", internal.Channel,
+		"playlist_ok", playErr == nil, "beacon_ok", spadeErr == nil)
 
 	switch {
 	case playErr == nil && spadeErr == nil:
@@ -160,6 +164,11 @@ func (w *watch) heartbeat(ctx context.Context, h platform.WatchHandle) error {
 // failure the cached playlist URL is evicted and re-resolved once: the
 // variant URL is signed and expires, and an ended broadcast 404s.
 func (w *watch) playlistHeartbeat(ctx context.Context, internal watchInternal) error {
+	w.playlistBeatMu.Lock()
+	defer w.playlistBeatMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	playlistURL, err := w.cachedPlaylistURL(ctx, internal)
 	if err != nil {
 		return fmt.Errorf("resolve playlist url: %w", err)
@@ -241,8 +250,24 @@ func (w *watch) spadeHeartbeat(ctx context.Context, internal watchInternal) erro
 	return w.c.sendSpadeBeacon(ctx, internal.Token, spadeURL, events)
 }
 
-func (w *watch) stop(_ context.Context, _ platform.WatchHandle) error {
+func (w *watch) stop(_ context.Context, h platform.WatchHandle) error {
+	// A new playback session should obtain fresh signed stream URLs, including
+	// a reconnect after a slow/frozen watch. Do not retain old-channel caches.
+	if internal, ok := h.Internal.(watchInternal); ok {
+		w.evictPlaylistURL(internal.Channel)
+		w.evictSpadeURL(internal.Channel)
+	}
 	return nil
+}
+
+func (w *watch) pulse(ctx context.Context, h platform.WatchHandle) error {
+	internal, ok := h.Internal.(watchInternal)
+	if !ok {
+		return errors.New("invalid watch handle")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	return w.playlistHeartbeat(ctx, internal)
 }
 
 // cachedSpadeURL returns the channel's beacon URL from the cache,

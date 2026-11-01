@@ -175,6 +175,7 @@ func (r *Runner) start(ctx context.Context) error {
 		cs.SubscribeChannel(r.cfg.AccountID, s.ChannelID)
 	}
 	r.setState(ctx, StateWatching)
+	r.startWatchPulse(ctx, &h)
 	return nil
 }
 
@@ -490,13 +491,21 @@ func (r *Runner) clearWatchViewLocked() {
 // The current target stays so a restart can resume the same drop; the
 // snapshot's channel, viewers and minutes clear until the next watch polls.
 func (r *Runner) stopWatch(ctx context.Context) {
+	r.stopWatchMu.Lock()
+	defer r.stopWatchMu.Unlock()
 	r.mu.Lock()
 	h := r.handle
+	pulse := r.playbackPulse
+	r.playbackPulse = nil
 	s := r.stream
 	r.handle = nil
 	r.stream = nil
 	r.clearWatchViewLocked()
 	r.mu.Unlock()
+	if pulse != nil {
+		pulse.cancel()
+		<-pulse.done
+	}
 	if h == nil {
 		return
 	}

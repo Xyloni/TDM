@@ -159,6 +159,30 @@ func TestWatch_PlaylistHeartbeatHeadsAllChunks(t *testing.T) {
 	assert.Len(t, f.heads, 6)
 }
 
+func TestPlaybackPulseReadsHLSWithoutSendingSpade(t *testing.T) {
+	f := newHLSFake(t, "live")
+	wt := &watch{c: f.client(), cachedUserID: 1}
+	h := startWatch(t, wt, "live", "b1")
+	require.NoError(t, wt.pulse(context.Background(), h))
+	require.Len(t, f.heads, 3)
+	require.Zero(t, f.spadeHits, "playback pulses must not send extra minute beacons")
+	require.Equal(t, 20*time.Second, (&Backend{}).WatchPulseInterval())
+}
+
+func TestStopWatchEvictsSignedPlaybackURLs(t *testing.T) {
+	f := newHLSFake(t, "live")
+	wt := &watch{c: f.client(), cachedUserID: 1}
+	h := startWatch(t, wt, "live", "b1")
+	require.NoError(t, wt.pulse(context.Background(), h))
+	wt.setSpadeURL("live", f.srv.URL+"/spade")
+	require.NoError(t, wt.stop(context.Background(), h))
+	require.Empty(t, wt.playlistURLs)
+	require.Empty(t, wt.spadeURLs)
+	h = startWatch(t, wt, "live", "b1")
+	require.NoError(t, wt.pulse(context.Background(), h))
+	require.Equal(t, 2, f.masterHits, "reconnect must resolve a fresh signed playback URL")
+}
+
 func TestSlowPlaylistDoesNotDelaySpadeBeacon(t *testing.T) {
 	playlistEntered := make(chan struct{})
 	beaconSent := make(chan struct{})

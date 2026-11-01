@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	pb "github.com/aalejandrofer/grubdrops/internal/auth/browser/gen/browser/v1"
 	"github.com/aalejandrofer/grubdrops/internal/platform"
@@ -456,6 +457,16 @@ func (b *BrowserBackend) Heartbeat(ctx context.Context, h platform.WatchHandle) 
 	}
 	return b.accountFor(h.AccountID).watch.heartbeat(ctx, h)
 }
+
+func (*BrowserBackend) WatchPulseInterval() time.Duration { return 20 * time.Second }
+func (b *BrowserBackend) WatchPulse(ctx context.Context, h platform.WatchHandle) error {
+	if h.AccountID == "" {
+		return errors.New("missing AccountID on WatchHandle")
+	}
+	return b.accountFor(h.AccountID).watch.pulse(ctx, h)
+}
+
+var _ platform.WatchPulser = (*BrowserBackend)(nil)
 
 func (b *BrowserBackend) StopWatch(ctx context.Context, h platform.WatchHandle) error {
 	if h.AccountID == "" {

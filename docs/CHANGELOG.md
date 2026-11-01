@@ -17,6 +17,7 @@ All notable changes to GrubDrops.
 - **Remove all accounts.** The UI uses a single API request and one database transaction to remove accounts, sessions, group assignments, and dependent working state. Existing claim and watch-minute history is retained.
 
 ### Fixed
+- **Gaps in Twitch playback.** Refresh HLS playback independently every 20 seconds, including while inventory reads are slow, while keeping the minute beacon at 60 seconds. Stop and join playback requests before account maintenance or watch replacement; reconnects obtain fresh signed URLs. Add per-path diagnostics without counting playback refreshes as extra watched minutes. Live accrual verification is still required.
 - **False authentication alerts during import.** New accounts awaiting their first login do not generate outage/recovery notifications. Canceled checks and failed session reads leave auth health unchanged; stale checks after deletion or a replacement login are discarded.
 - **Canceled dashboard requests.** Stop walking account lists after request cancellation and suppress session-lookup warnings caused by that cancellation.
 - **Watch interruptions after inventory errors.** A failed progress read keeps a successful watch alive and retries on the next tick.

@@ -3,6 +3,7 @@ package platform
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 // ErrIntegrityBlocked is returned by a Backend (Twitch today) when the
@@ -46,6 +47,13 @@ type Backend interface {
 	Heartbeat(ctx context.Context, h WatchHandle) error
 	StopWatch(ctx context.Context, h WatchHandle) error
 	Claim(ctx context.Context, s Session, b DropBenefit) error
+}
+
+// WatchPulser optionally maintains playback more frequently than minute-based
+// heartbeats/inventory polls. Pulses must honor cancellation and never claim.
+type WatchPulser interface {
+	WatchPulseInterval() time.Duration
+	WatchPulse(context.Context, WatchHandle) error
 }
 
 // RewardClaimer is an optional capability for backends that surface

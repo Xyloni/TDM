@@ -531,6 +531,13 @@ func (b *Backend) Heartbeat(ctx context.Context, h platform.WatchHandle) error {
 	return b.watch.heartbeat(ctx, h)
 }
 
+func (*Backend) WatchPulseInterval() time.Duration { return 20 * time.Second }
+func (b *Backend) WatchPulse(ctx context.Context, h platform.WatchHandle) error {
+	return b.watch.pulse(ctx, h)
+}
+
+var _ platform.WatchPulser = (*Backend)(nil)
+
 func (b *Backend) StopWatch(ctx context.Context, h platform.WatchHandle) error {
 	return b.watch.stop(ctx, h)
 }

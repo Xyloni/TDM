@@ -131,6 +131,7 @@ func (r *Runner) beginForce(ctx context.Context, login string, s platform.Stream
 		cs.SubscribeChannel(r.cfg.AccountID, s.ChannelID)
 	}
 	r.setState(ctx, StateForceWatching)
+	r.startWatchPulse(ctx, &h)
 	return nil
 }
 
