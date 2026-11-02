@@ -1,8 +1,10 @@
 # Changelog
 
-All notable changes to GrubDrops.
+All notable changes to Pzhomba Pump (GrubDrops fork).
 
 ## [Unreleased]
+
+## [1.1.0] — 2026-11-02
 
 ### Added
 - **Farming uniformity screen.** Inspect platform-confirmed gains, observation coverage and speed over rolling 15/30-minute windows, current channels, waiting reasons and recent slow-accrual switches. Search/filter accounts and sort slowest or longest remaining first. Observations are bounded in memory and restart with a rebuilt worker; stopped or failed-read gaps are excluded.
@@ -18,12 +20,13 @@ All notable changes to GrubDrops.
 - **Slow tick diagnostics.** Runner logs identify account operations that exceed the minute heartbeat interval.
 
 ### Changed
+- **Release documentation.** Refresh the bilingual README with the Pzhomba Pump logo, complete feature overview, Telegram command guide and version-pinned Docker examples; publish release highlights in English followed by Russian.
 - **Interface branding.** Use Pzhomba Pump in the interface, browser title and setup text, with the supplied logo and multi-size icon stored under `assets/img/`.
 - **Remove all accounts.** The UI uses a single API request and one database transaction to remove accounts, sessions, group assignments, and dependent working state. Existing claim and watch-minute history is retained.
 
 ### Fixed
 - **Duplicate claims during a watch rescan.** Leave the actively watched reward to the normal claim flow instead of also claiming it while scanning completed unlinked Twitch rewards. This prevents duplicate claim requests, records and notifications from the same inventory snapshot, while preserving retries and background collection of other completed rewards.
-- **Gaps in Twitch playback.** Refresh HLS playback independently every 20 seconds, including while inventory reads are slow, while keeping the minute beacon at 60 seconds. Stop and join playback requests before account maintenance or watch replacement; reconnects obtain fresh signed URLs. Add per-path diagnostics without counting playback refreshes as extra watched minutes. Live accrual verification is still required.
+- **Gaps in Twitch playback.** Refresh HLS playback independently every 20 seconds, including while inventory reads are slow, while keeping the minute beacon at 60 seconds. Stop and join playback requests before account maintenance or watch replacement; reconnects obtain fresh signed URLs. Add per-path diagnostics without counting playback refreshes as extra watched minutes.
 - **False authentication alerts during import.** New accounts awaiting their first login do not generate outage/recovery notifications. Canceled checks and failed session reads leave auth health unchanged; stale checks after deletion or a replacement login are discarded.
 - **Canceled dashboard requests.** Stop walking account lists after request cancellation and suppress session-lookup warnings caused by that cancellation.
 - **Watch interruptions after inventory errors.** A failed progress read keeps a successful watch alive and retries on the next tick.
@@ -36,7 +39,7 @@ All notable changes to GrubDrops.
 - **Duplicate Windows launcher.** Keep `run-miner.bat` as the only Windows launch script.
 
 ### Notes
-- Changes to the watch path remain unreleased pending verification against a live Twitch drop.
+- Twitch accrual and claim changes were verified against live drops in the supplied November 1–2 sessions. The latest session recorded 700 unique account/reward claims with no duplicates; both active groups completed. See the release verification section in `docs/AUDIT-VPS-2026-11-01.md`. Kick accrual paths are unchanged. This release retains the existing HLS 404 recovery timing.
 
 ## [1.0.1] — 2026-10-29
 
