@@ -540,7 +540,7 @@
   "health.msg.progress": "İzleme ilerlemesi",
   "health.msg.heartbeat": "{channel} kanalına heartbeat gönderildi",
   "health.msg.heartbeat_failed": "{channel} kanalına heartbeat başarısız: {err}",
-  "health.msg.channel_offline": "{channel} çevrimdışı oldu, değiştiriliyor",
+  "health.msg.channel_offline": "{channel} artık uygun değil, kanal değiştiriliyor",
   "health.msg.benefit_complete": "{channel} kanalında {benefit_name} tamamlandı, alınıyor",
   "health.msg.benefit_frozen": "{channel} kanalında {benefit_name} takıldı, kanal değiştiriliyor",
   "health.msg.benefit_vanished": "{benefit_name} envanterden çıktı, başka yerde alınmış sayıldı",
@@ -736,5 +736,9 @@
   "farm.commands.toggle": "Telegram komutlarını işle",
   "farm.commands.toggle_help": "/help, /status, /groups, /lagging. Her bot için yalnız bir uygulama örneğinde etkinleştirin. Sorun özetleri Hatalar bildirim ayarını kullanır.",
   "farm.digest.observed": "Tam gözlem aralığı: %d / %d.",
-  "farm.group.all_message": "Etkin hesaplar: %d / %d tamamlandı."
+  "farm.group.all_message": "Etkin hesaplar: %d / %d tamamlandı.",
+  "farm.waiting_duration": "Yayın bekleniyor: {time}",
+  "health.msg.channel_check_uncertain": "{channel} doğrulanamadı, izlemeye devam ediliyor",
+  "health.msg.directory_omission": "{channel} dizinde yok ama hâlâ uygun, izlemeye devam ediliyor",
+  "health.msg.playback_recovery": "{channel} kanalında tekrarlanan HLS 404, {next_channel} kanalına yeniden bağlanılıyor"
 }

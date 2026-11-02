@@ -67,7 +67,7 @@
 				<tr class:problem={problemAccount(a)}>
 					<td><div class="account"><PlatformMark platform={a.platform} /><strong>{a.name}</strong></div><small>{a.reward || t('farm.no_reward')}</small></td>
 					{#each [a.stats.minutes_15, a.stats.minutes_30] as w, i (i)}<td title={t('farm.observed', { n: w.observation_minutes.toFixed(1) })}><strong>+{w.gain}</strong><small>{w.rate === null ? t('farm.unknown') : `${Math.round(w.rate * 100)}%`}{!w.ready ? ' · ' + t('farm.partial') : ''}</small></td>{/each}
-					<td>{a.channel || '—'}</td><td><span class:bad={problemAccount(a)}>{t(farmReasonKeys[a.reason] ?? 'farm.unknown')}</span>{#if a.stats.rotations_15}<small>{t('farm.rotations', { n: a.stats.rotations_15 })}</small>{/if}</td><td>{duration(a.eta_minutes)}</td>
+					<td>{a.channel || '—'}</td><td><span class:bad={problemAccount(a)}>{t(farmReasonKeys[a.reason] ?? 'farm.unknown')}</span>{#if a.waiting_seconds > 0}<small>{t('farm.waiting_duration', { time: `${Math.floor(a.waiting_seconds / 60)}:${String(a.waiting_seconds % 60).padStart(2, '0')}` })}</small>{/if}{#if a.stats.rotations_15}<small>{t('farm.rotations', { n: a.stats.rotations_15 })}</small>{/if}</td><td>{duration(a.eta_minutes)}</td>
 				</tr>
 			{/each}</tbody></table>
 			{#if !rows.length}<p class="empty">{t('farm.empty')}</p>{/if}

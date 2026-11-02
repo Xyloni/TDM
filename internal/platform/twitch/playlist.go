@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/aalejandrofer/grubdrops/internal/platform"
 )
 
 // usherBaseURL is the HLS master playlist endpoint. The channel login and
@@ -142,7 +144,7 @@ func (c *client) fetchHLS(ctx context.Context, oauthToken, rawURL string) ([]byt
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxPlaylistBytes))
 	if resp.StatusCode >= 400 {
 		// An offline stream returns 404 here.
-		return nil, fmt.Errorf("status %d", resp.StatusCode)
+		return nil, hlsStatusError("playlist", resp.StatusCode)
 	}
 	// Usher/edge errors come back as JSON (sometimes a one-element list)
 	// instead of an m3u8 body.
@@ -185,7 +187,7 @@ func (c *client) headHLS(ctx context.Context, oauthToken, rawURL string) error {
 	io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("chunk HEAD: status %d", resp.StatusCode)
+		return hlsStatusError("chunk HEAD", resp.StatusCode)
 	}
 	return nil
 }
@@ -221,4 +223,11 @@ func (c *client) hostAllowedForHLS(rawURL string) bool {
 		}
 	}
 	return false
+}
+
+func hlsStatusError(operation string, status int) error {
+	if status == http.StatusNotFound {
+		return fmt.Errorf("%s: status %d: %w", operation, status, platform.ErrPlaybackUnavailable)
+	}
+	return fmt.Errorf("%s: status %d", operation, status)
 }

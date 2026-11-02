@@ -66,15 +66,20 @@ type Runner struct {
 	lastScanTry time.Time // last scan attempt, failed or not; paces rescans
 	nextRecheck time.Time // deadline of the armed idle wait timer; zero = none
 	// sleepNoStream marks a sleep with campaigns queued but no eligible live
-	// stream; it waits recheckInterval, not idleRecheck. pick clears it.
-	sleepNoStream bool
-	lastBeatAt    time.Time     // when the current watch last beaconed; zero = not yet
-	wake          chan struct{} // signalled on every state change, cap 1
-	rescan        chan struct{} // signalled by Rescan, cap 1
-	forceScan     atomic.Bool   // set by Rescan; the next watch poll rescans
-	playbackPulse *watchPulse   // guarded by mu; drained before StopWatch
-	switchCh      chan struct{} // signalled by MineNow, cap 1
-	switchNow     atomic.Bool   // set by MineNow; Run drops the watch and re-picks
+	// stream; retries back off with per-account jitter. pick clears the flag.
+	sleepNoStream    bool
+	noStreamAttempts int
+	streamWaitSince  time.Time
+	playbackHealth   playbackHealth
+	reconnectChannel string
+	reconnectBeatAt  time.Time
+	lastBeatAt       time.Time     // when the current watch last beaconed; zero = not yet
+	wake             chan struct{} // signalled on every state change, cap 1
+	rescan           chan struct{} // signalled by Rescan, cap 1
+	forceScan        atomic.Bool   // set by Rescan; the next watch poll rescans
+	playbackPulse    *watchPulse   // guarded by mu; drained before StopWatch
+	switchCh         chan struct{} // signalled by MineNow, cap 1
+	switchNow        atomic.Bool   // set by MineNow; Run drops the watch and re-picks
 	// pinned is the Mine now target. pick keeps it while a scan merely omits
 	// it, and drops it once it is claimed, blocked, ended or has no stream.
 	pinned   *plan.Target
@@ -242,17 +247,18 @@ func (r *Runner) Snapshot() Snapshot {
 	pace := r.scanEvery()
 	r.mu.Lock()
 	s := Snapshot{
-		AccountID:      r.cfg.AccountID,
-		Platform:       r.cfg.Platform,
-		State:          r.state,
-		Channel:        r.channel,
-		ViewerCount:    r.viewers,
-		MinutesWatched: r.minutes,
-		StartedAt:      r.startedAt,
-		LastPollAt:     r.lastPollAt,
-		LastScanAt:     r.lastScanAt,
-		Farming:        r.farm.stats(time.Now()),
-		Blocked:        append([]plan.Blocked(nil), r.blocked...),
+		AccountID:       r.cfg.AccountID,
+		Platform:        r.cfg.Platform,
+		State:           r.state,
+		Channel:         r.channel,
+		ViewerCount:     r.viewers,
+		MinutesWatched:  r.minutes,
+		StartedAt:       r.startedAt,
+		LastPollAt:      r.lastPollAt,
+		LastScanAt:      r.lastScanAt,
+		Farming:         r.farm.stats(time.Now()),
+		StreamWaitSince: r.streamWaitSince,
+		Blocked:         append([]plan.Blocked(nil), r.blocked...),
 	}
 	switch r.state {
 	case StateNeedsLogin, StateNoGames:
@@ -263,7 +269,7 @@ func (r *Runner) Snapshot() Snapshot {
 		if !r.nextRecheck.IsZero() {
 			s.NextScanAt = r.nextRecheck
 		} else if !r.lastScanTry.IsZero() {
-			s.NextScanAt = r.lastScanTry.Add(idleWait(r.state, r.sleepNoStream, pace))
+			s.NextScanAt = r.lastScanTry.Add(r.idleWaitLocked(r.state, pace))
 		}
 	default:
 		if !r.lastScanTry.IsZero() {
@@ -299,6 +305,13 @@ func (r *Runner) setState(ctx context.Context, s State) {
 	r.mu.Lock()
 	prev := r.state
 	r.state = s
+	if s == StateSleeping && r.sleepNoStream && r.streamWaitSince.IsZero() {
+		r.streamWaitSince = time.Now()
+	}
+	if s == StateWatching || s == StateForceWatching || s == StateNeedsLogin || s == StateNoGames || (s == StateSleeping && !r.sleepNoStream) {
+		r.streamWaitSince = time.Time{}
+		r.noStreamAttempts = 0
+	}
 	r.mu.Unlock()
 	if s != prev {
 		select {
@@ -717,10 +730,16 @@ func (r *Runner) Run(ctx context.Context) error {
 			backoff = 0
 			pace := r.scanEvery()
 			r.mu.Lock()
-			wait := idleWait(before, r.sleepNoStream, pace)
+			wait := r.idleWaitLocked(before, pace)
+			if before == StateSleeping && r.sleepNoStream {
+				r.noStreamAttempts = min(r.noStreamAttempts+1, 16)
+			}
 			timer := time.NewTimer(wait)
 			r.nextRecheck = time.Now().Add(wait)
 			r.mu.Unlock()
+			if before == StateSleeping {
+				slog.Debug("runner idle retry scheduled", "account", r.cfg.AccountID, "retry_in", wait)
+			}
 			select {
 			case <-ctx.Done():
 				timer.Stop()

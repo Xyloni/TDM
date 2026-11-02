@@ -540,7 +540,7 @@
   "health.msg.progress": "Прогресс просмотра",
   "health.msg.heartbeat": "Сигнал активности отправлен каналу {channel}",
   "health.msg.heartbeat_failed": "Не удалось отправить сигнал активности каналу {channel}: {err}",
-  "health.msg.channel_offline": "Канал {channel} завершил эфир, переключение",
+  "health.msg.channel_offline": "Канал {channel} больше не подходит, переключение",
   "health.msg.benefit_complete": "Награда {benefit_name} на канале {channel} готова, получение…",
   "health.msg.benefit_frozen": "Прогресс награды {benefit_name} на канале {channel} остановился, смена канала",
   "health.msg.benefit_vanished": "Награда {benefit_name} исчезла из инвентаря, считается полученной на другой платформе",
@@ -736,5 +736,9 @@
   "farm.commands.toggle": "Обрабатывать команды Telegram",
   "farm.commands.toggle_help": "/help, /status, /groups, /lagging. Включайте только на одном экземпляре приложения для каждого бота. Сводки проблем используют переключатель уведомлений «Ошибки».",
   "farm.digest.observed": "Полных окон наблюдения: %d из %d.",
-  "farm.group.all_message": "Включённые аккаунты: закончили %d из %d."
+  "farm.group.all_message": "Включённые аккаунты: закончили %d из %d.",
+  "farm.waiting_duration": "Ожидание трансляции: {time}",
+  "health.msg.channel_check_uncertain": "Не удалось перепроверить {channel}, просмотр продолжается",
+  "health.msg.directory_omission": "Канала {channel} нет в каталоге, но он подходит; просмотр продолжается",
+  "health.msg.playback_recovery": "Повторные HLS 404 на {channel}, переподключение к {next_channel}"
 }

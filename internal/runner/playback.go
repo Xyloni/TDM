@@ -55,6 +55,11 @@ func (r *Runner) startWatchPulse(parent context.Context, handle *platform.WatchH
 			if ctx.Err() != nil {
 				return
 			}
+			r.mu.Lock()
+			if r.playbackPulse == p {
+				r.playbackHealth.observe(time.Now(), err)
+			}
+			r.mu.Unlock()
 			if err != nil {
 				if failures.Changed(err.Error()) {
 					slog.Warn("runner playback pulse failed", "kind", "error", "account", r.cfg.AccountID, "channel", h.Channel, "err", err)

@@ -13,17 +13,18 @@ import (
 )
 
 type Account struct {
-	ID         string              `json:"id"`
-	Name       string              `json:"name"`
-	Platform   string              `json:"platform"`
-	Group      int                 `json:"group"`
-	Channel    string              `json:"channel"`
-	Reward     string              `json:"reward"`
-	Reason     string              `json:"reason"`
-	Stats      runner.FarmingStats `json:"stats"`
-	Remaining  int                 `json:"remaining"`
-	ETAMinutes *int                `json:"eta_minutes"`
-	Complete   bool                `json:"complete"`
+	ID             string              `json:"id"`
+	Name           string              `json:"name"`
+	Platform       string              `json:"platform"`
+	Group          int                 `json:"group"`
+	Channel        string              `json:"channel"`
+	Reward         string              `json:"reward"`
+	Reason         string              `json:"reason"`
+	Stats          runner.FarmingStats `json:"stats"`
+	Remaining      int                 `json:"remaining"`
+	ETAMinutes     *int                `json:"eta_minutes"`
+	WaitingSeconds int                 `json:"waiting_seconds"`
+	Complete       bool                `json:"complete"`
 }
 
 type Group struct {
@@ -187,6 +188,9 @@ func Build(now time.Time, accounts []gen.Account, snapshots []runner.Snapshot, q
 			x.Reason = "slow"
 		default:
 			x.Reason = "healthy"
+		}
+		if (x.Reason == "waiting_stream" || x.Reason == "starting") && !s.StreamWaitSince.IsZero() {
+			x.WaitingSeconds = max(0, int(now.Sub(s.StreamWaitSince).Seconds()))
 		}
 		if x.Complete {
 			zero := 0

@@ -540,7 +540,7 @@
   "health.msg.progress": "观看进度",
   "health.msg.heartbeat": "已向 {channel} 发送心跳",
   "health.msg.heartbeat_failed": "向 {channel} 发送心跳失败：{err}",
-  "health.msg.channel_offline": "{channel} 已下线，正在切换",
+  "health.msg.channel_offline": "{channel} 不再符合条件，切换频道",
   "health.msg.benefit_complete": "{benefit_name} 已在 {channel} 完成，正在领取",
   "health.msg.benefit_frozen": "{benefit_name} 在 {channel} 停滞，正在换频道",
   "health.msg.benefit_vanished": "{benefit_name} 已不在库存中，视为在别处领取",
@@ -736,5 +736,9 @@
   "farm.commands.toggle": "处理Telegram命令",
   "farm.commands.toggle_help": "/help、/status、/groups、/lagging。每个机器人仅在一个应用实例中启用。问题摘要遵循错误通知开关。",
   "farm.digest.observed": "完整观测窗口：%d/%d。",
-  "farm.group.all_message": "已启用账号：%d/%d已完成。"
+  "farm.group.all_message": "已启用账号：%d/%d已完成。",
+  "farm.waiting_duration": "等待直播：{time}",
+  "health.msg.channel_check_uncertain": "无法验证 {channel}，继续播放",
+  "health.msg.directory_omission": "{channel} 未出现在目录中但仍符合条件，继续播放",
+  "health.msg.playback_recovery": "{channel} 持续出现 HLS 404，重新连接到 {next_channel}"
 }

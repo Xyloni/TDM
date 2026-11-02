@@ -406,8 +406,8 @@ func TestRunner_NoStreamSleepArmsRecheck(t *testing.T) {
 	if dl.IsZero() {
 		t.Fatalf("no recheck armed; state=%s", r.State())
 	}
-	if left := time.Until(dl); left > recheckInterval || left < recheckInterval-time.Minute {
-		t.Fatalf("recheck in %v, want about %v", left, recheckInterval)
+	if left := time.Until(dl); left > 60*time.Second || left < 29*time.Second {
+		t.Fatalf("recheck in %v, want first stream retry in 30-60 seconds", left)
 	}
 }
 

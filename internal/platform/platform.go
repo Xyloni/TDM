@@ -12,6 +12,10 @@ import (
 // account into needs_auth.
 var ErrIntegrityBlocked = errors.New("integrity check failed")
 
+// ErrPlaybackUnavailable marks an HLS HTTP 404 after URL refresh. Only repeated
+// playback failures, rather than unrelated transport errors, trigger recovery.
+var ErrPlaybackUnavailable = errors.New("playback unavailable")
+
 // ErrClaimNeedsLink is matched with errors.Is on a Claim error when the
 // platform refused the claim until the user links an external account (Riot,
 // Steam, ...). The runner then blocks the drop as not linked instead of

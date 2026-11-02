@@ -62,7 +62,7 @@ func TestForceWatch_StartsWhenQueueEmpty(t *testing.T) {
 		t.Fatalf("viewers=%d", s.ViewerCount)
 	}
 	if left := time.Until(s.NextScanAt); left > recheckInterval || left < recheckInterval-time.Minute {
-		t.Fatalf("next scan in %v, want about %v", left, recheckInterval)
+		t.Fatalf("next force-watch scan in %v, want about %v", left, recheckInterval)
 	}
 	if callIndex(f, "Lookup:a", 1) > callIndex(f, "Lookup:b", 1) {
 		t.Fatalf("lookups out of order: %v", f.Calls)
@@ -142,12 +142,12 @@ func TestForceWatch_SwitchesToHigherRankAndOffline(t *testing.T) {
 	if s.State != StateSleeping || s.Channel != "" {
 		t.Fatalf("%+v", s)
 	}
-	if left := time.Until(s.NextScanAt); left > recheckInterval || left < recheckInterval-time.Minute {
-		t.Fatalf("next scan in %v, want about %v", left, recheckInterval)
+	if left := time.Until(s.NextScanAt); left > 60*time.Second || left < 29*time.Second {
+		t.Fatalf("next scan in %v, want first stream retry in 30-60 seconds", left)
 	}
 }
 
-// No force channel live at pick: sleep with the 5-minute recheck, not the
+// No force channel live at pick: sleep with the fast stream recheck, not the
 // empty-queue idle wait.
 func TestForceWatch_NoneLiveSleepsShort(t *testing.T) {
 	f := platformtest.NewFake()
@@ -158,8 +158,8 @@ func TestForceWatch_NoneLiveSleepsShort(t *testing.T) {
 	if s.State != StateSleeping {
 		t.Fatalf("%+v", s)
 	}
-	if left := time.Until(s.NextScanAt); left > recheckInterval || left < recheckInterval-time.Minute {
-		t.Fatalf("next scan in %v, want about %v", left, recheckInterval)
+	if left := time.Until(s.NextScanAt); left > 60*time.Second || left < 29*time.Second {
+		t.Fatalf("next scan in %v, want first stream retry in 30-60 seconds", left)
 	}
 	if f.CallCount("Start:") != 0 {
 		t.Fatalf("calls=%v", f.Calls)

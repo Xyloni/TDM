@@ -77,3 +77,19 @@ func TestGroupForecastCompletedAndStaleAccounts(t *testing.T) {
 	require.Equal(t, 1, r.Group.Completed)
 	require.Zero(t, *r.Group.ETAMinutes)
 }
+
+func TestWaitingDurationDoesNotConfuseHealthySpeedWithWatching(t *testing.T) {
+	now := time.Now()
+	s := observing(now, "a", 1)
+	s.State = runner.StateSleeping
+	s.StreamWaitSince = now.Add(-123 * time.Second)
+	accounts := []gen.Account{{ID: "a", Enabled: 1}}
+	r := Build(now, accounts, []runner.Snapshot{s}, store.AccountGroupQueue{})
+	require.Equal(t, "waiting_stream", r.Accounts[0].Reason)
+	require.Equal(t, 123, r.Accounts[0].WaitingSeconds)
+	require.Nil(t, r.Accounts[0].ETAMinutes)
+	s.State = runner.StateWatching
+	s.StreamWaitSince = time.Time{}
+	r = Build(now, accounts, []runner.Snapshot{s}, store.AccountGroupQueue{})
+	require.Zero(t, r.Accounts[0].WaitingSeconds)
+}

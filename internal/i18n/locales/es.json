@@ -540,7 +540,7 @@
   "health.msg.progress": "Progreso de visionado",
   "health.msg.heartbeat": "Latido enviado a {channel}",
   "health.msg.heartbeat_failed": "Latido a {channel} fallido: {err}",
-  "health.msg.channel_offline": "{channel} se desconectó, cambiando",
+  "health.msg.channel_offline": "{channel} ya no es válido, cambiando de canal",
   "health.msg.benefit_complete": "{benefit_name} completo en {channel}, reclamando",
   "health.msg.benefit_frozen": "{benefit_name} estancado en {channel}, cambiando de canal",
   "health.msg.benefit_vanished": "{benefit_name} salió del inventario, contado como reclamado fuera",
@@ -736,5 +736,9 @@
   "farm.commands.toggle": "Procesar comandos de Telegram",
   "farm.commands.toggle_help": "/help, /status, /groups, /lagging. Actívalo en una sola instancia por bot. Los resúmenes siguen el ajuste de notificaciones de errores.",
   "farm.digest.observed": "Ventanas completas de observación: %d de %d.",
-  "farm.group.all_message": "Cuentas habilitadas: %d de %d terminadas."
+  "farm.group.all_message": "Cuentas habilitadas: %d de %d terminadas.",
+  "farm.waiting_duration": "Esperando una transmisión: {time}",
+  "health.msg.channel_check_uncertain": "No se pudo verificar {channel}, continúa la reproducción",
+  "health.msg.directory_omission": "{channel} no aparece en el directorio pero sigue siendo válido, continúa la reproducción",
+  "health.msg.playback_recovery": "Recuperando errores HLS 404 repetidos en {channel}, reconectando a {next_channel}"
 }

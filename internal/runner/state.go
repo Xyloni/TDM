@@ -115,6 +115,8 @@ type Config struct {
 
 // Snapshot is a copy of the runner's observable state.
 type Snapshot struct {
+	StreamWaitSince time.Time // beginning of the current search for an eligible stream
+
 	Farming                           FarmingStats
 	AccountID, Platform               string
 	State                             State

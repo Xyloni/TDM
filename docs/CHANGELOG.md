@@ -4,6 +4,20 @@ All notable changes to Pzhomba Pump (GrubDrops fork).
 
 ## [Unreleased]
 
+### Added
+- **Current stream waiting time.** Show the duration of the current unsuccessful channel search on the farming screen, separate from credited-minute speed.
+- **Channel eligibility diagnostics.** Log directory omissions, confirmed offline streams, category/broadcast changes and failed checks separately.
+
+### Changed
+- **Faster stream rediscovery.** Retry an unavailable stream after 30–60 seconds, then gradually back off to five minutes with per-account jitter. Successful playback resets the retry sequence.
+
+### Fixed
+- **False offline decisions.** Recheck a missing Twitch channel directly before stopping playback; preserve a live eligible stream and tolerate failed verification requests.
+- **Persistent HLS 404 recovery.** After three consecutive refreshed-playlist 404 failures over at least 40 seconds, reconnect through the runner loop; try an alternative after a repeated failure, with a two-minute recovery cooldown. Inventory completion and normal claiming take precedence; minute beacons retain their 60-second cadence.
+
+### Verification
+- Live validation of the new playback recovery is pending. Keep these changes unreleased until a real Twitch campaign has been tested.
+
 ## [1.1.0] — 2026-11-02
 
 ### Added

@@ -540,7 +540,7 @@
   "health.msg.progress": "Watch progress",
   "health.msg.heartbeat": "Heartbeat sent to {channel}",
   "health.msg.heartbeat_failed": "Heartbeat to {channel} failed: {err}",
-  "health.msg.channel_offline": "{channel} went offline, switching",
+  "health.msg.channel_offline": "{channel} is no longer eligible, switching",
   "health.msg.benefit_complete": "{benefit_name} complete on {channel}, claiming",
   "health.msg.benefit_frozen": "{benefit_name} stalled on {channel}, rotating channel",
   "health.msg.benefit_vanished": "{benefit_name} left the inventory, counted as claimed elsewhere",
@@ -736,5 +736,9 @@
   "farm.commands.toggle": "Handle Telegram commands",
   "farm.commands.toggle_help": "/help, /status, /groups, /lagging. Enable on only one app instance per bot. Problem digests follow the Errors notification toggle.",
   "farm.digest.observed": "Full observation windows: %d of %d.",
-  "farm.group.all_message": "Enabled accounts: %d of %d finished."
+  "farm.group.all_message": "Enabled accounts: %d of %d finished.",
+  "farm.waiting_duration": "Waiting for a stream: {time}",
+  "health.msg.channel_check_uncertain": "Could not verify {channel}, continuing playback",
+  "health.msg.directory_omission": "{channel} is absent from the directory but remains eligible, continuing playback",
+  "health.msg.playback_recovery": "Recovering repeated HLS 404 on {channel}, reconnecting to {next_channel}"
 }

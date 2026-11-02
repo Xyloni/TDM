@@ -5,7 +5,7 @@ import { sortFarming } from './farming';
 const account = (id: string, rate: number | null, reason = 'healthy', eta: number | null = 10): FarmingAccount => ({
 	id, name: id, platform: 'twitch', group: 1, channel: 'live', reward: 'Reward', reason,
 	stats: { minutes_15: { gain: 15, observation_minutes: 15, rate, ready: rate !== null }, minutes_30: { gain: 0, observation_minutes: 0, rate: null, ready: false }, rotations_15: 0 },
-	remaining: 10, eta_minutes: eta, complete: reason === 'complete'
+	waiting_seconds: 0, remaining: 10, eta_minutes: eta, complete: reason === 'complete'
 });
 
 describe('farming sorting', () => {

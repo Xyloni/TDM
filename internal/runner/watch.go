@@ -113,6 +113,20 @@ func (r *Runner) start(ctx context.Context) error {
 		return streams[i].ViewerCount > streams[j].ViewerCount
 	})
 
+	r.mu.Lock()
+	preferred := r.reconnectChannel
+	previousBeat := r.reconnectBeatAt
+	r.reconnectChannel = ""
+	r.reconnectBeatAt = time.Time{}
+	r.mu.Unlock()
+	if preferred != "" {
+		for i := range streams {
+			if streams[i].Channel == preferred {
+				streams[0], streams[i] = streams[i], streams[0]
+				break
+			}
+		}
+	}
 	s := streams[0]
 	if checker, ok := r.cfg.Backend.(platform.AvailableDropsChecker); ok {
 		probed := 0
@@ -160,7 +174,8 @@ func (r *Runner) start(ctx context.Context) error {
 	r.viewers = s.ViewerCount
 	r.startedAt = time.Now()
 	r.tickN = 0
-	r.lastBeatAt = time.Time{}
+	r.lastBeatAt = previousBeat // recovery does not create an extra minute beacon
+	r.playbackHealth.resetWatch()
 	r.noProgress = 0
 	r.noAdvance = 0
 	r.lastMin = 0
@@ -203,22 +218,10 @@ func (r *Runner) tick(ctx context.Context) error {
 
 	every := max(1, int(liveCheckEvery/r.cfg.TickInterval))
 	if tickN%every == 0 {
-		streams, err := r.cfg.Backend.ListEligibleChannels(ctx, r.cfg.Session, target.Campaign)
-		if err == nil {
-			live := false
-			for _, s := range streams {
-				if s.Channel == handle.Channel {
-					live = true
-					break
-				}
-			}
-			if !live {
-				slog.Info("runner channel went offline; swapping", "kind", "state",
-					"account", r.cfg.AccountID, "channel", handle.Channel, "alternatives", len(streams))
-				r.stopWatch(ctx)
-				r.setState(ctx, StateStarting)
-				return nil
-			}
+		if r.checkWatchChannel(ctx, handle, target) {
+			r.stopWatch(ctx)
+			r.setState(ctx, StateStarting)
+			return nil
 		}
 	}
 
@@ -231,6 +234,9 @@ func (r *Runner) tick(ctx context.Context) error {
 		r.mu.Unlock()
 		// The watch heartbeat succeeded. A failed progress read is not evidence
 		// the stream stopped; preserve the handle and retry on the next minute.
+		if r.recoverPlayback(ctx, handle, target, time.Now()) {
+			return nil
+		}
 		return ctx.Err()
 	}
 	polledAt := time.Now()
@@ -332,6 +338,9 @@ func (r *Runner) tick(ctx context.Context) error {
 		}
 	}
 
+	if r.recoverPlayback(ctx, handle, target, polledAt) {
+		return nil
+	}
 	if !matched {
 		r.mu.Lock()
 		r.accrual = accrualWindow{}

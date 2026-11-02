@@ -6,7 +6,7 @@ export interface FarmingWindow { gain: number; observation_minutes: number; rate
 export interface FarmingAccount {
 	id: string; name: string; platform: Platform; group: number; channel: string; reward: string; reason: string;
 	stats: { minutes_15: FarmingWindow; minutes_30: FarmingWindow; rotations_15: number };
-	remaining: number; eta_minutes: number | null; complete: boolean;
+	remaining: number; eta_minutes: number | null; complete: boolean; waiting_seconds: number;
 }
 export interface FarmingReport {
 	at: string; accounts: FarmingAccount[]; observed: number; slow: number; problems: number; rotated: number;

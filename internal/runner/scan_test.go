@@ -357,8 +357,8 @@ func TestSnapshot_NextScanAt_NoStreamSleep(t *testing.T) {
 	r.mu.Lock()
 	last := r.lastScanTry
 	r.mu.Unlock()
-	if got := r.Snapshot().NextScanAt; !got.Equal(last.Add(5 * time.Minute)) {
-		t.Fatalf("no-stream NextScanAt=%v want %v", got, last.Add(5*time.Minute))
+	if got := r.Snapshot().NextScanAt; got.Before(last.Add(30*time.Second)) || got.After(last.Add(60*time.Second)) {
+		t.Fatalf("no-stream NextScanAt=%v want first retry 30-60s after %v", got, last)
 	}
 
 	f.Campaigns = nil // next pick has an empty queue
