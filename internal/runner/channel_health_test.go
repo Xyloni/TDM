@@ -205,3 +205,82 @@ func TestPlaybackSuccessDuringAlternativeLookupCancelsRecovery(t *testing.T) {
 	require.Equal(t, StateWatching, r.State())
 	require.Zero(t, f.CallCount("Stop:"))
 }
+
+func TestAdvisoryMismatchRequiresFreshGainFromSameWatch(t *testing.T) {
+	for _, tc := range []struct {
+		name                             string
+		baselineBenefit                  string
+		age                              time.Duration
+		minutes                          int
+		missing                          bool
+		inventoryErr                     error
+		offline, wrongGame, newBroadcast bool
+		keep                             bool
+	}{
+		{name: "fresh gain keeps viewing", baselineBenefit: "d1", age: time.Minute, minutes: 11, keep: true},
+		{name: "flat minutes still switch", baselineBenefit: "d1", age: time.Minute, minutes: 10},
+		{name: "regressed minutes still switch", baselineBenefit: "d1", age: time.Minute, minutes: 9},
+		{name: "missing reward still switches", baselineBenefit: "d1", age: time.Minute, missing: true},
+		{name: "another reward cannot establish gain", baselineBenefit: "other", age: time.Minute, minutes: 11},
+		{name: "stale baseline cannot establish gain", baselineBenefit: "d1", age: 3 * time.Minute, minutes: 11},
+		{name: "previous watch baseline cleared", baselineBenefit: "d1", minutes: 11},
+		{name: "failed inventory check keeps viewing", baselineBenefit: "d1", age: time.Minute, inventoryErr: errors.New("timeout"), keep: true},
+		{name: "offline overrides old gain", baselineBenefit: "d1", age: time.Minute, minutes: 11, offline: true},
+		{name: "changed category overrides gain", baselineBenefit: "d1", age: time.Minute, minutes: 11, wrongGame: true},
+		{name: "new broadcast overrides gain", baselineBenefit: "d1", age: time.Minute, minutes: 11, newBroadcast: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := platformtest.NewFake()
+			b := &eligibilityBackend{Fake: f, live: !tc.offline, stream: platform.Stream{Channel: "a", ChannelID: "ida", Game: "Rust", BroadcastID: "old"}, drops: map[string]struct{}{"other": {}}}
+			r := watching(t, f, func(c *Config) { c.Backend = b; c.Platform = "twitch" })
+			f.Streams["c1"] = []platform.Stream{{Channel: "b"}}
+			if !tc.missing {
+				f.Progress["d1"] = &platform.Progress{BenefitID: "d1", MinutesWatched: tc.minutes}
+			}
+			f.InventoryErr = tc.inventoryErr
+			r.stream.BroadcastID = "old"
+			r.farm.benefit = tc.baselineBenefit
+			r.farm.minutes = 10
+			if tc.age > 0 {
+				r.farm.last = time.Now().Add(-tc.age)
+			}
+			if tc.wrongGame {
+				b.stream.Game = "Other"
+			}
+			if tc.newBroadcast {
+				b.stream.BroadcastID = "new"
+			}
+			shouldSwitch := r.checkWatchChannel(context.Background(), *r.handle, *r.current)
+			require.Equal(t, !tc.keep, shouldSwitch)
+			require.Zero(t, f.CallCount("Claim:"))
+		})
+	}
+}
+
+func TestAdvisoryMismatchDoesNotBlockNormalClaimOrFreezeSafeguard(t *testing.T) {
+	for _, complete := range []bool{false, true} {
+		t.Run(map[bool]string{false: "flat progress rotates", true: "complete reward claims once"}[complete], func(t *testing.T) {
+			f := platformtest.NewFake()
+			b := &eligibilityBackend{Fake: f, live: true, stream: platform.Stream{Channel: "a", ChannelID: "ida", Game: "Rust"}, drops: map[string]struct{}{"other": {}}}
+			r := watching(t, f, func(c *Config) { c.Backend = b; c.Platform = "twitch"; c.TickInterval = liveCheckEvery })
+			r.farm.observe(time.Now().Add(-time.Minute), "d1", 59)
+			r.lastPollMin = 59
+			f.Streams["c1"] = []platform.Stream{{Channel: "b"}}
+			f.Progress["d1"] = &platform.Progress{BenefitID: "d1", MinutesWatched: 59, InstanceID: "instance"}
+			if !complete {
+				f.OnHeartbeat = func(*platformtest.Fake) {}
+			}
+			steps(t, r, 1)
+			if complete {
+				require.Equal(t, StateClaiming, r.State())
+				require.Zero(t, f.CallCount("Stop:"))
+				steps(t, r, 1)
+				require.Equal(t, 1, f.CallCount("Claim:"))
+			} else {
+				require.Equal(t, StateStarting, r.State())
+				require.Equal(t, 1, f.CallCount("Stop:"))
+				require.Zero(t, f.CallCount("Claim:"))
+			}
+		})
+	}
+}

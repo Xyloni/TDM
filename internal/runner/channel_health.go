@@ -56,6 +56,13 @@ func (r *Runner) checkWatchChannel(ctx context.Context, handle platform.WatchHan
 				slog.Info("runner channel check inconclusive; keeping watch", "account", r.cfg.AccountID, "channel", handle.Channel, "reason", "category_unknown")
 				return false
 			}
+			r.mu.Lock()
+			changedBroadcast := r.stream != nil && r.stream.BroadcastID != "" && stream.BroadcastID != "" && r.stream.BroadcastID != stream.BroadcastID
+			r.mu.Unlock()
+			if changedBroadcast {
+				reason = "broadcast_changed"
+				break
+			}
 			if checker, ok := r.cfg.Backend.(platform.AvailableDropsChecker); ok && stream.ChannelID != "" {
 				drops, err := checker.AvailableDropIDs(ctx, r.cfg.Session, stream.ChannelID)
 				if err != nil {
@@ -64,17 +71,19 @@ func (r *Runner) checkWatchChannel(ctx context.Context, handle platform.WatchHan
 				}
 				if len(drops) > 0 {
 					if _, ok := drops[target.Benefit.ID]; !ok {
+						advancing, err := r.verifyWatchProgress(ctx, target)
+						if err != nil {
+							slog.Warn("runner channel check inconclusive; keeping watch", "account", r.cfg.AccountID, "channel", handle.Channel, "reason", "progress_check_error", "err", err)
+							return false
+						}
+						if advancing {
+							slog.Info("runner channel check inconclusive; keeping watch", "account", r.cfg.AccountID, "channel", handle.Channel, "benefit", target.Benefit.ID, "reason", "reward_list_conflicts_with_progress")
+							return false
+						}
 						reason = "reward_not_available"
 						break
 					}
 				}
-			}
-			r.mu.Lock()
-			changedBroadcast := r.stream != nil && r.stream.BroadcastID != "" && stream.BroadcastID != "" && r.stream.BroadcastID != stream.BroadcastID
-			r.mu.Unlock()
-			if changedBroadcast {
-				reason = "broadcast_changed"
-				break
 			}
 			slog.Info("runner channel absent from directory but still eligible; keeping watch", "account", r.cfg.AccountID, "channel", handle.Channel, "reason", "directory_omission")
 			return false
@@ -82,6 +91,33 @@ func (r *Runner) checkWatchChannel(ctx context.Context, handle platform.WatchHan
 	}
 	slog.Info("runner channel no longer eligible; swapping", "kind", "state", "account", r.cfg.AccountID, "channel", handle.Channel, "reason", reason, "alternatives", len(streams))
 	return true
+}
+
+// Only a new inventory read can overrule the advisory drop list. The baseline
+// must belong to this watch and reward; old progress, PubSub pushes and local
+// heartbeat counts cannot establish that the channel is still earning credit.
+func (r *Runner) verifyWatchProgress(ctx context.Context, target plan.Target) (bool, error) {
+	r.mu.Lock()
+	baseline := r.farm.last
+	benefit := r.farm.benefit
+	minutes := r.farm.minutes
+	r.mu.Unlock()
+	if baseline.IsZero() || benefit != target.Benefit.ID || time.Since(baseline) < 0 || time.Since(baseline) > slowAccrualMaxGap {
+		return false, nil
+	}
+	progress, err := r.cfg.Backend.InventoryProgress(ctx, r.cfg.Session)
+	if err != nil {
+		return false, err
+	}
+	if ctx.Err() != nil {
+		return false, ctx.Err()
+	}
+	for _, p := range progress {
+		if p.BenefitID == target.Benefit.ID {
+			return p.MinutesWatched > minutes, nil
+		}
+	}
+	return false, nil
 }
 
 // Caller holds mu. Deterministic jitter spreads accounts without flaky clocks

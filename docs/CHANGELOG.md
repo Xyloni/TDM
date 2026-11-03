@@ -12,6 +12,7 @@ All notable changes to Pzhomba Pump (GrubDrops fork).
 - **Faster stream rediscovery.** Retry an unavailable stream after 30–60 seconds, then gradually back off to five minutes with per-account jitter. Successful playback resets the retry sequence.
 
 ### Fixed
+- **Keep crediting Twitch streams.** When the advisory reward list omits the active reward, confirm a fresh inventory gain against a recent baseline from the same watch before interrupting playback. Offline, category/broadcast changes and non-advancing rewards retain their safeguards; failed verification reads leave playback running.
 - **False offline decisions.** Recheck a missing Twitch channel directly before stopping playback; preserve a live eligible stream and tolerate failed verification requests.
 - **Persistent HLS 404 recovery.** After three consecutive refreshed-playlist 404 failures over at least 40 seconds, reconnect through the runner loop; try an alternative after a repeated failure, with a two-minute recovery cooldown. Inventory completion and normal claiming take precedence; minute beacons retain their 60-second cadence.
 
