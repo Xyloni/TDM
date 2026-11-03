@@ -4,11 +4,14 @@ All notable changes to Pzhomba Pump (GrubDrops fork).
 
 ## [Unreleased]
 
+## [1.1.5] — 2026-11-03
+
 ### Added
 - **Current stream waiting time.** Show the duration of the current unsuccessful channel search on the farming screen, separate from credited-minute speed.
 - **Channel eligibility diagnostics.** Log directory omissions, confirmed offline streams, category/broadcast changes and failed checks separately.
 
 ### Changed
+- **Release documentation.** Publish bilingual v1.1.5 notes, update README image examples and recovery descriptions, and record the anonymized 12-hour live verification.
 - **Faster stream rediscovery.** Retry an unavailable stream after 30–60 seconds, then gradually back off to five minutes with per-account jitter. Successful playback resets the retry sequence.
 
 ### Fixed
@@ -17,7 +20,9 @@ All notable changes to Pzhomba Pump (GrubDrops fork).
 - **Persistent HLS 404 recovery.** After three consecutive refreshed-playlist 404 failures over at least 40 seconds, reconnect through the runner loop; try an alternative after a repeated failure, with a two-minute recovery cooldown. Inventory completion and normal claiming take precedence; minute beacons retain their 60-second cadence.
 
 ### Verification
-- Live validation of the new playback recovery is pending. Keep these changes unreleased until a real Twitch campaign has been tested.
+- Live Twitch campaign verified on 3 November, 04:54–17:09 Moscow time, with about 150 accounts watching concurrently: 1802 unique account/reward claims, no duplicate claims or ERROR records, three completed group handoffs. Median whole-account accrual speed was 99.87%, minimum 96.40%.
+- The new progress guard preserved 19515 working watches; channel eligibility switches fell to 265 during this 12-hour run.
+- Persistent HLS 404 did not occur in the live run. Its recovery branch is covered by unit tests, including URL refresh, confirmation, cooldown, completion priority and cancellation of obsolete recovery. This specific failure response has not been observed live. Kick accrual was not changed.
 
 ## [1.1.0] — 2026-11-02
 

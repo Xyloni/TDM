@@ -32,9 +32,9 @@
 | 🔄 Account groups | Import numbered groups, mine a campaign group by group, choose the startup wave size, and advance to the next campaign after a round completes. |
 | 🎮 Campaigns and planning | Discover campaigns, inspect rewards and account progress, prioritize games or campaigns ending soon, reorder the session queue and use **Mine now**. |
 | 🎁 Reward controls | Exclude or restore a reward for every current and future account. Mark rewards collected locally, remove manual marks and recheck linked-account requirements. Platform prerequisites still apply. |
-| 📊 Farming uniformity | See confirmed gains and speed over 15/30-minute windows, current channels, waiting reasons and recent recovery switches. Search, filter and sort slow accounts first. |
+| 📊 Farming uniformity | See confirmed gains and speed over 15/30-minute windows, current channels, waiting reasons, current stream-wait duration and recent recovery switches. Search, filter and sort slow accounts first. |
 | ⏳ Group forecast | See finished/total members, the estimated remaining time and accounts holding up the group. Missing or blocked data is shown explicitly. |
-| 🛠️ Twitch recovery | Refresh HLS independently every 20 seconds while keeping minute beacons at 60 seconds. Keep watching through temporary inventory-read failures and switch channels after sustained slow accrual is confirmed. |
+| 🛠️ Twitch recovery | Refresh HLS independently every 20 seconds while keeping minute beacons at 60 seconds. Keep crediting streams through temporary inventory-read failures or incomplete reward lists, retry stream discovery with staggered backoff, and recover persistent HLS 404 or confirmed slow accrual. |
 | 📺 Force watch | Choose channels to watch when no eligible reward is queued. Reward mining takes priority when a target becomes available. |
 | 📚 Inventory and history | Browse campaigns, per-account reward states, claim history, and all-time/today viewing totals. |
 | 🤖 Telegram | Receive claim, progress, auth and error events, pinned group handoffs, an editable problem digest and daily summaries. Use `/help`, `/status`, `/groups` and `/lagging`. |
@@ -47,7 +47,7 @@
 
 ### 🚀 Quick start on a VPS
 
-The miner image is **`ghcr.io/xyloni/grubdrops`**. Use `:v1.1.0` for this release or `:latest` for the latest successful development build. GitHub Actions publishes images after checks pass.
+The miner image is **`ghcr.io/xyloni/grubdrops`**. Use `:v1.1.5` for this release or `:latest` for the latest successful development build. GitHub Actions publishes images after checks pass.
 
 For a simple HTTP deployment, create a working directory and `compose.yml` on the server:
 
@@ -59,7 +59,7 @@ cd /opt/grubdrops
 ```yaml
 services:
   miner:
-    image: ghcr.io/xyloni/grubdrops:v1.1.0
+    image: ghcr.io/xyloni/grubdrops:v1.1.5
     restart: unless-stopped
     ports:
       - "8080:8080"
@@ -86,7 +86,7 @@ Twitch uses direct HTTP and does not require a browser sidecar. Kick's normal pl
 The [`vps/`](vps/) directory contains a Compose setup with Caddy, automatic HTTPS and Watchtower:
 
 1. Copy the `vps` directory to the server and enter it.
-2. Copy `.env.example` to `.env`. Set `GRUB_IMAGE=ghcr.io/xyloni/grubdrops:v1.1.0`, your `GRUB_DOMAIN`, and your timezone. Choose `:latest` if you want updates from the development branch.
+2. Copy `.env.example` to `.env`. Set `GRUB_IMAGE=ghcr.io/xyloni/grubdrops:v1.1.5`, your `GRUB_DOMAIN`, and your timezone. Choose `:latest` if you want updates from the development branch.
 3. Point the domain's DNS record to the VPS and allow inbound ports 80 and 443.
 4. Start the services:
 
@@ -202,9 +202,9 @@ Distributed under the [MIT License](LICENSE). The original project and its histo
 | 🔄 Группы аккаунтов | Импорт пронумерованных групп, последовательный фарм кампании, размер волны запуска и переход к следующей кампании после завершения круга. |
 | 🎮 Кампании и планирование | Поиск кампаний, просмотр наград и прогресса аккаунтов, приоритет игр или ближайшего окончания, временная сортировка очереди и команда **«Фармить сейчас»**. |
 | 🎁 Управление наградами | Исключение и возврат предмета для всех текущих и будущих аккаунтов, локальная отметка получения, удаление ручной отметки и повторная проверка привязки. Условия платформы сохраняются. |
-| 📊 Равномерность фарма | Фактический прирост и скорость за 15/30 минут, текущие каналы, причины ожидания и недавние переключения из-за отставания. Поиск, фильтры и сортировка отстающих. |
+| 📊 Равномерность фарма | Фактический прирост и скорость за 15/30 минут, текущие каналы, причины и длительность ожидания, недавние переключения из-за отставания. Поиск, фильтры и сортировка отстающих. |
 | ⏳ Прогноз группы | Завершившие аккаунты, примерное оставшееся время и участники, задерживающие переход. Отсутствующие данные и блокировки показываются явно. |
-| 🛠️ Восстановление Twitch | Независимый HLS-цикл раз в 20 секунд и минутный маяк раз в 60 секунд. Просмотр продолжается при временных ошибках инвентаря; подтверждённое медленное начисление запускает смену канала. |
+| 🛠️ Восстановление Twitch | Независимый HLS-цикл раз в 20 секунд и минутный маяк раз в 60 секунд. Просмотр сохраняется при временных ошибках инвентаря и неполных списках наград. Поиск трансляций повторяется с разнесёнными интервалами; предусмотрено восстановление после устойчивых HLS 404 и подтверждённого медленного начисления. |
 | 📺 Просмотр выбранных каналов | Просмотр указанных каналов, когда в очереди нет доступной награды. При появлении цели фарм наград получает приоритет. |
 | 📚 Инвентарь и история | Кампании, состояние наград по аккаунтам, история получений, минуты просмотра за сегодня и за всё время. |
 | 🤖 Telegram | Получения, прогресс, авторизация и ошибки, закреплённые переходы групп, редактируемая сводка проблем и ежедневные итоги. Команды `/help`, `/status`, `/groups`, `/lagging`. |
@@ -217,7 +217,7 @@ Distributed under the [MIT License](LICENSE). The original project and its histo
 
 ### 🚀 Быстрый запуск на VPS
 
-Образ майнера: **`ghcr.io/xyloni/grubdrops`**. Тег `:v1.1.0` закрепляет этот релиз, `:latest` получает последнюю успешно собранную версию ветки разработки. GitHub Actions публикует образы после проверок.
+Образ майнера: **`ghcr.io/xyloni/grubdrops`**. Тег `:v1.1.5` закрепляет этот релиз, `:latest` получает последнюю успешно собранную версию ветки разработки. GitHub Actions публикует образы после проверок.
 
 Для простого запуска по HTTP создай рабочую папку и файл `compose.yml` на сервере:
 
@@ -229,7 +229,7 @@ cd /opt/grubdrops
 ```yaml
 services:
   miner:
-    image: ghcr.io/xyloni/grubdrops:v1.1.0
+    image: ghcr.io/xyloni/grubdrops:v1.1.5
     restart: unless-stopped
     ports:
       - "8080:8080"
@@ -256,7 +256,7 @@ Twitch работает через прямые HTTP-запросы и не тр
 В папке [`vps/`](vps/) находится Compose-набор с Caddy, автоматическим HTTPS и Watchtower:
 
 1. Скопируй папку `vps` на сервер и перейди в неё.
-2. Скопируй `.env.example` в `.env`. Укажи `GRUB_IMAGE=ghcr.io/xyloni/grubdrops:v1.1.0`, домен в `GRUB_DOMAIN` и часовой пояс. Для обновлений из ветки разработки выбери `:latest`.
+2. Скопируй `.env.example` в `.env`. Укажи `GRUB_IMAGE=ghcr.io/xyloni/grubdrops:v1.1.5`, домен в `GRUB_DOMAIN` и часовой пояс. Для обновлений из ветки разработки выбери `:latest`.
 3. Направь DNS домена на VPS и открой входящие порты 80 и 443.
 4. Запусти службы:
 
